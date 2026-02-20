@@ -3,8 +3,7 @@ import { startRelayServer } from './relay/server.js';
 const server = await startRelayServer();
 
 function shutdown(): void {
-	server.close().catch((err: unknown) => {
-		console.error('Error during relay shutdown:', err);
+	server.close().catch((_err: unknown) => {
 		process.exit(1);
 	});
 }

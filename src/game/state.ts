@@ -1,4 +1,4 @@
-import { compare } from 'fast-json-patch';
+import fjp from 'fast-json-patch';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 
@@ -93,7 +93,7 @@ export class StateManager {
 	}
 
 	computeDelta(gameId: string, turn: number, previous: BattleState, current: BattleState): StateDelta {
-		const patches = compare(
+		const patches = fjp.compare(
 			previous as unknown as Record<string, unknown>,
 			current as unknown as Record<string, unknown>,
 		);

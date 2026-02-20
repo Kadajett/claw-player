@@ -1,35 +1,31 @@
 import type { Logger } from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock hyper-express before importing RelayServer so uWS native bindings are not loaded
-vi.mock('hyper-express', () => {
-	class MockRouter {
-		use = vi.fn();
-		get = vi.fn();
-		post = vi.fn();
-	}
-
-	class MockServer {
-		private handlers: Map<string, unknown> = new Map();
-		use = vi.fn();
-		get = vi.fn();
-		post = vi.fn();
-		ws = vi.fn();
-		publish = vi.fn();
-		listen = vi.fn().mockResolvedValue(undefined);
-		close = vi.fn().mockResolvedValue(undefined);
-
-		// biome-ignore lint/suspicious/noExplicitAny: test helper that mirrors the real API shape
-		on(event: string, handler: unknown): any {
-			this.handlers.set(event, handler);
-			return this;
-		}
-	}
+// Mock uWebSockets.js before importing RelayServer so native bindings are not loaded
+vi.mock('uWebSockets.js', () => {
+	const mockApp = {
+		get: vi.fn().mockReturnThis(),
+		post: vi.fn().mockReturnThis(),
+		ws: vi.fn().mockReturnThis(),
+		listen: vi.fn((_port: number, cb: (token: unknown) => void) => {
+			cb({}); // fake listen socket
+			return mockApp;
+		}),
+		close: vi.fn().mockReturnThis(),
+		publish: vi.fn().mockReturnValue(true),
+	};
 
 	return {
-		default: { Server: MockServer, Router: MockRouter },
-		Server: MockServer,
-		Router: MockRouter,
+		default: {
+			App: () => mockApp,
+			DISABLED: 0,
+			// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
+			us_listen_socket_close: vi.fn(),
+		},
+		App: () => mockApp,
+		DISABLED: 0,
+		// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
+		us_listen_socket_close: vi.fn(),
 	};
 });
 
@@ -99,7 +95,7 @@ describe('RelayServer', () => {
 			expect(() => new RelayServer('secret1234567890', 4000, logger)).not.toThrow();
 		});
 
-		it('exposes HyperExpress app via getApp()', () => {
+		it('exposes uWS app via getApp()', () => {
 			const server = new RelayServer('secret1234567890', 4000, logger);
 			expect(server.getApp()).toBeDefined();
 		});

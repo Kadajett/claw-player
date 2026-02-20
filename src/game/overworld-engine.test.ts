@@ -73,17 +73,18 @@ function makeVoteResult(overrides?: Partial<OverworldVoteResult>): OverworldVote
 
 function makeMockEmulator(ram: ReadonlyArray<number> = makeRam()) {
 	return {
-		getRAM: vi.fn().mockReturnValue(ram),
-		pressButton: vi.fn(),
-		advanceFrames: vi.fn(),
+		getRAM: vi.fn().mockResolvedValue(ram),
+		pressButton: vi.fn().mockResolvedValue(undefined),
+		advanceFrames: vi.fn().mockResolvedValue(undefined),
 		isInitialized: true,
-		loadRom: vi.fn(),
-		readByte: vi.fn(),
-		readWord: vi.fn(),
-		readBytes: vi.fn(),
-		advanceSeconds: vi.fn(),
-		pressButtons: vi.fn(),
-		shutdown: vi.fn(),
+		loadRom: vi.fn().mockResolvedValue(undefined),
+		readByte: vi.fn().mockResolvedValue(0),
+		readWord: vi.fn().mockResolvedValue(0),
+		readBytes: vi.fn().mockResolvedValue([]),
+		advanceSeconds: vi.fn().mockResolvedValue(undefined),
+		pressButtons: vi.fn().mockResolvedValue(undefined),
+		waitMs: vi.fn().mockResolvedValue(undefined),
+		shutdown: vi.fn().mockResolvedValue(undefined),
 	};
 }
 
@@ -842,7 +843,7 @@ describe('UnifiedTickProcessor', () => {
 	describe('getCurrentPhase', () => {
 		it('returns current phase from emulator RAM', async () => {
 			await unified.start('game-1');
-			expect(unified.getCurrentPhase()).toBe(GamePhase.Overworld);
+			await expect(unified.getCurrentPhase()).resolves.toBe(GamePhase.Overworld);
 		});
 
 		it('returns Battle when in-battle flag set', async () => {
@@ -861,7 +862,7 @@ describe('UnifiedTickProcessor', () => {
 			);
 
 			await unified.start('game-1');
-			expect(unified.getCurrentPhase()).toBe(GamePhase.Battle);
+			await expect(unified.getCurrentPhase()).resolves.toBe(GamePhase.Battle);
 		});
 	});
 

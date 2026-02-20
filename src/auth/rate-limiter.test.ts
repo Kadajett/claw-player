@@ -1,8 +1,7 @@
-import type { Request, Response } from 'hyper-express';
 import type { Redis } from 'ioredis';
 import { describe, expect, it, vi } from 'vitest';
 import type { ApiKeyMetadata } from '../types/api.js';
-import { buildRateLimitMiddleware, checkRateLimit, getAgentFromLocals } from './rate-limiter.js';
+import { checkRateLimit, getRateLimitBurst } from './rate-limiter.js';
 
 vi.mock('../redis/lua-scripts.js', () => ({
 	runTokenBucket: vi.fn(),
@@ -11,19 +10,6 @@ vi.mock('../redis/lua-scripts.js', () => ({
 import { runTokenBucket } from '../redis/lua-scripts.js';
 
 const mockRunTokenBucket = vi.mocked(runTokenBucket);
-
-describe('getAgentFromLocals', () => {
-	it('returns agent when present in locals', () => {
-		const agent: ApiKeyMetadata = { agentId: 'a1', plan: 'free', rpsLimit: 5, createdAt: 1 };
-		const req = { locals: { agent } } as unknown as Request;
-		expect(getAgentFromLocals(req)).toEqual(agent);
-	});
-
-	it('returns undefined when agent missing', () => {
-		const req = { locals: {} } as unknown as Request;
-		expect(getAgentFromLocals(req)).toBeUndefined();
-	});
-});
 
 describe('checkRateLimit', () => {
 	it('returns allowed=true with correct retryAfterMs=0', async () => {
@@ -48,57 +34,16 @@ describe('checkRateLimit', () => {
 	});
 });
 
-describe('buildRateLimitMiddleware', () => {
-	const makeRes = () => {
-		const res: Partial<Response> = {
-			status: vi.fn().mockReturnThis() as unknown as Response['status'],
-			json: vi.fn().mockReturnThis() as unknown as Response['json'],
-			header: vi.fn().mockReturnThis() as unknown as Response['header'],
-		};
-		return res as Response;
-	};
-
-	it('returns 401 when no agent in locals', async () => {
-		const client = {} as unknown as Redis;
-		const middleware = buildRateLimitMiddleware(client);
-		const req = { locals: {} } as unknown as Request;
-		const res = makeRes();
-
-		await middleware(req, res);
-
-		expect(res.status).toHaveBeenCalledWith(401);
-		expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'MISSING_AUTH' }));
+describe('getRateLimitBurst', () => {
+	it('returns PLAN_BURST value for known plan', () => {
+		const agent: ApiKeyMetadata = { agentId: 'a1', plan: 'standard', rpsLimit: 20, createdAt: 1 };
+		const burst = getRateLimitBurst(agent);
+		expect(burst).toBeGreaterThan(0);
 	});
 
-	it('returns 429 when rate limited', async () => {
-		mockRunTokenBucket.mockResolvedValue({ allowed: false, remaining: 0 });
-		const client = {} as unknown as Redis;
-		const middleware = buildRateLimitMiddleware(client);
-
-		const agent: ApiKeyMetadata = { agentId: 'a1', plan: 'standard', rpsLimit: 20, createdAt: 1 };
-		const req = { locals: { agent } } as unknown as Request;
-		const res = makeRes();
-
-		await middleware(req, res);
-
-		expect(res.status).toHaveBeenCalledWith(429);
-		expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'RATE_LIMITED' }));
-	});
-
-	it('sets rate limit headers and proceeds when allowed', async () => {
-		mockRunTokenBucket.mockResolvedValue({ allowed: true, remaining: 18 });
-		const client = {} as unknown as Redis;
-		const middleware = buildRateLimitMiddleware(client);
-
-		const agent: ApiKeyMetadata = { agentId: 'a1', plan: 'standard', rpsLimit: 20, createdAt: 1 };
-		const req = { locals: { agent } } as unknown as Request;
-		const res = makeRes();
-
-		await middleware(req, res);
-
-		expect(res.header).toHaveBeenCalledWith('X-RateLimit-Limit', '20');
-		expect(res.header).toHaveBeenCalledWith('X-RateLimit-Remaining', '18');
-		expect(res.status).not.toHaveBeenCalledWith(429);
-		expect(res.json).not.toHaveBeenCalled();
+	it('falls back to rpsLimit * 2 for unknown plan', () => {
+		const agent = { agentId: 'a1', plan: 'custom' as 'free', rpsLimit: 10, createdAt: 1 };
+		const burst = getRateLimitBurst(agent);
+		expect(burst).toBe(20);
 	});
 });

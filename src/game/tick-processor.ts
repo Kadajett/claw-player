@@ -1,12 +1,18 @@
 import type { Logger } from 'pino';
 
 import { applyAction } from './battle-engine.js';
+import { getButtonSequence } from './button-sequences.js';
+import type { GameBoyEmulator } from './emulator-interface.js';
+import { extractBattleState } from './memory-map.js';
+import { StatePoller } from './state-poller.js';
 import type { StateManager } from './state.js';
 import { type BattleState, DEFAULT_FALLBACK_ACTION, type TickResult } from './types.js';
 import type { VoteAggregator } from './vote-aggregator.js';
 
 export type TickProcessorOptions = {
 	tickIntervalMs: number;
+	useRealEmulator?: boolean | undefined;
+	emulator?: GameBoyEmulator | undefined;
 };
 
 export class TickProcessor {
@@ -18,6 +24,9 @@ export class TickProcessor {
 	private readonly voteAggregator: VoteAggregator;
 	private readonly logger: Logger;
 	private readonly tickIntervalMs: number;
+	private readonly useRealEmulator: boolean;
+	private readonly emulator: GameBoyEmulator | null;
+	private readonly statePoller: StatePoller | null;
 
 	constructor(
 		stateManager: StateManager,
@@ -29,6 +38,9 @@ export class TickProcessor {
 		this.voteAggregator = voteAggregator;
 		this.logger = logger;
 		this.tickIntervalMs = options.tickIntervalMs;
+		this.useRealEmulator = options.useRealEmulator ?? false;
+		this.emulator = options.emulator ?? null;
+		this.statePoller = this.emulator ? new StatePoller(this.emulator, logger) : null;
 	}
 
 	async start(gameId: string): Promise<void> {
@@ -84,8 +96,20 @@ export class TickProcessor {
 			? voteResult.winningAction
 			: DEFAULT_FALLBACK_ACTION;
 
-		// Apply to battle engine
-		const { newState, description } = applyAction(previousState, actionToApply, voteResult.totalVotes);
+		let newState: BattleState;
+		let description: string;
+
+		if (this.useRealEmulator && this.emulator) {
+			// Real emulator path: press buttons, wait for animations, read actual state
+			const result = await this.executeOnRealEmulator(gameId, actionToApply, currentTickId, voteResult.totalVotes);
+			newState = result.newState;
+			description = result.description;
+		} else {
+			// Simulation path: pure state machine (original behavior)
+			const result = applyAction(previousState, actionToApply, voteResult.totalVotes);
+			newState = result.newState;
+			description = result.description;
+		}
 
 		// Update current state
 		this.currentState = newState;
@@ -128,6 +152,42 @@ export class TickProcessor {
 		}
 
 		return result;
+	}
+
+	private async executeOnRealEmulator(
+		gameId: string,
+		actionToApply: string,
+		tickId: number,
+		totalVotes: number,
+	): Promise<{ newState: BattleState; description: string }> {
+		const emulator = this.emulator;
+		if (!emulator) {
+			throw new Error('Real emulator not available');
+		}
+
+		// Get button sequence for this action
+		const steps = getButtonSequence(actionToApply as import('./types.js').BattleAction);
+
+		this.logger.info({ action: actionToApply, steps: steps.length }, 'Executing button sequence on real emulator');
+
+		// Execute each button press with timing
+		for (const step of steps) {
+			await emulator.pressButton(step.button);
+			await emulator.waitMs(step.delayMs);
+		}
+
+		// Poll for the battle menu to be ready again
+		if (this.statePoller) {
+			await this.statePoller.waitForBattleMenuReady({ maxWaitMs: 8000 });
+		}
+
+		// Read actual state from emulator RAM
+		const ram = await emulator.getRAM();
+		const newState = extractBattleState(Array.from(ram), gameId, tickId + 1);
+
+		const description = `Executed ${actionToApply} on real emulator (${totalVotes} votes)`;
+
+		return { newState, description };
 	}
 
 	async initAndStart(gameId: string, initialState: BattleState): Promise<void> {

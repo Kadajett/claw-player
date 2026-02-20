@@ -2,7 +2,7 @@ import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 
-import type { Emulator, GbButton } from './emulator.js';
+import type { GameBoyEmulator, GbButton } from './emulator-interface.js';
 import { extractBattleState, isInBattle } from './memory-map.js';
 import type { TickProcessor } from './tick-processor.js';
 
@@ -347,7 +347,7 @@ export class OverworldTickProcessor {
 	private currentGameId: string | null = null;
 	private currentState: OverworldState | null = null;
 
-	private readonly emulator: Emulator;
+	private readonly emulator: GameBoyEmulator;
 	private readonly stateStore: OverworldStateStore;
 	private readonly voteTallier: OverworldVoteTallier;
 	private readonly logger: Logger;
@@ -355,7 +355,7 @@ export class OverworldTickProcessor {
 	private readonly frameCounts: FrameCounts;
 
 	constructor(
-		emulator: Emulator,
+		emulator: GameBoyEmulator,
 		stateStore: OverworldStateStore,
 		voteTallier: OverworldVoteTallier,
 		logger: Logger,
@@ -376,7 +376,7 @@ export class OverworldTickProcessor {
 
 		const state = await this.stateStore.loadState(gameId);
 		if (!state) {
-			const ram = this.emulator.getRAM();
+			const ram = await this.emulator.getRAM();
 			this.currentState = extractOverworldState(ram, gameId, 0);
 			await this.stateStore.saveState(this.currentState);
 		} else {
@@ -461,16 +461,16 @@ export class OverworldTickProcessor {
 
 		// Map action to button and press on emulator
 		const button = mapActionToButton(actionToApply);
-		this.emulator.pressButton(button);
+		await this.emulator.pressButton(button);
 
 		// Advance additional frames for animation completion
 		const additionalFrames = this.getConfiguredFrameCount(actionToApply);
 		if (additionalFrames > 0) {
-			this.emulator.advanceFrames(additionalFrames);
+			await this.emulator.advanceFrames(additionalFrames);
 		}
 
 		// Extract new state from emulator RAM
-		const ram = this.emulator.getRAM();
+		const ram = await this.emulator.getRAM();
 		const description = describeAction(actionToApply, previousState.phase);
 
 		const newState: OverworldState = {
@@ -539,14 +539,14 @@ export class UnifiedTickProcessor {
 	private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 	private currentGameId: string | null = null;
 
-	private readonly emulator: Emulator;
+	private readonly emulator: GameBoyEmulator;
 	private readonly battleTickProcessor: TickProcessor;
 	private readonly overworldTickProcessor: OverworldTickProcessor;
 	private readonly logger: Logger;
 	private readonly checkIntervalMs: number;
 
 	constructor(
-		emulator: Emulator,
+		emulator: GameBoyEmulator,
 		battleTickProcessor: TickProcessor,
 		overworldTickProcessor: OverworldTickProcessor,
 		logger: Logger,
@@ -567,7 +567,7 @@ export class UnifiedTickProcessor {
 		this.currentGameId = gameId;
 
 		// Detect initial phase and start appropriate processor
-		const ram = this.emulator.getRAM();
+		const ram = await this.emulator.getRAM();
 		const phase = detectGamePhase(ram);
 
 		if (phase === GamePhase.Battle) {
@@ -603,8 +603,8 @@ export class UnifiedTickProcessor {
 		return this.watchdogTimer !== null;
 	}
 
-	getCurrentPhase(): GamePhase {
-		const ram = this.emulator.getRAM();
+	async getCurrentPhase(): Promise<GamePhase> {
+		const ram = await this.emulator.getRAM();
 		return detectGamePhase(ram);
 	}
 
@@ -619,7 +619,7 @@ export class UnifiedTickProcessor {
 		if (battleRunning || overworldRunning) return;
 
 		// Both processors stopped, detect current phase and restart
-		const ram = this.emulator.getRAM();
+		const ram = await this.emulator.getRAM();
 		const phase = detectGamePhase(ram);
 
 		if (phase === GamePhase.Battle) {

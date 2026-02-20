@@ -1,20 +1,10 @@
-import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Redis } from 'ioredis';
 import pino from 'pino';
+import { lookupApiKey } from '../auth/api-key.js';
 import type { ApiKeyValidationResult } from '../types/mcp.js';
 
 const logger = pino({ name: 'mcp-auth' });
-
-// API keys are stored in Redis as a hash:
-//   key: "api_keys"
-//   field: sha256(rawKey)
-//   value: agentId
-const API_KEYS_HASH = 'api_keys';
-
-function hashApiKey(rawKey: string): string {
-	return createHash('sha256').update(rawKey).digest('hex');
-}
 
 export async function validateApiKey(req: IncomingMessage, redis: Redis): Promise<ApiKeyValidationResult> {
 	const rawKey = req.headers['x-api-key'];
@@ -24,18 +14,16 @@ export async function validateApiKey(req: IncomingMessage, redis: Redis): Promis
 		return { valid: false, reason: 'Missing X-Api-Key header' };
 	}
 
-	const keyHash = hashApiKey(rawKey);
-
 	try {
-		const agentId = await redis.hget(API_KEYS_HASH, keyHash);
+		const agent = await lookupApiKey(redis, rawKey);
 
-		if (agentId === null) {
-			logger.warn({ keyHash: keyHash.slice(0, 8) }, 'Unknown API key');
+		if (agent === null) {
+			logger.warn('Unknown API key');
 			return { valid: false, reason: 'Invalid API key' };
 		}
 
-		logger.debug({ agentId }, 'API key validated');
-		return { valid: true, agentId };
+		logger.debug({ agentId: agent.agentId }, 'API key validated');
+		return { valid: true, agentId: agent.agentId };
 	} catch (err) {
 		logger.error({ err }, 'Redis error during API key validation');
 		return { valid: false, reason: 'Internal server error' };

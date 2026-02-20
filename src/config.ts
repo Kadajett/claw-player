@@ -18,6 +18,10 @@ const envSchema = z.object({
 	RELAY_URL: z.string().url().optional(),
 	RELAY_SECRET: z.string().min(16).optional(),
 	RELAY_PORT: z.coerce.number().int().positive().default(4000),
+	// Emulator backend: 'serverboy' (headless) or 'mgba' (visual, via TCP socket)
+	EMULATOR_BACKEND: z.enum(['serverboy', 'mgba']).default('serverboy'),
+	MGBA_HOST: z.string().default('127.0.0.1'),
+	MGBA_PORT: z.coerce.number().int().positive().default(8888),
 });
 
 export type Config = z.infer<typeof envSchema>;

@@ -1,9 +1,9 @@
-import HyperExpress from 'hyper-express';
-import type { Request, Response } from 'hyper-express';
 import type { Logger } from 'pino';
+import uWS from 'uWebSockets.js';
+import type { HttpRequest, HttpResponse, WebSocket, us_listen_socket } from 'uWebSockets.js';
 
 import { lookupApiKey } from '../auth/api-key.js';
-import { AGENT_LOCALS_KEY, buildRateLimitMiddleware, getAgentFromLocals } from '../auth/rate-limiter.js';
+import { checkRateLimit, getRateLimitBurst } from '../auth/rate-limiter.js';
 import { createLogger } from '../logger.js';
 import { createRedisClient } from '../redis/client.js';
 import { VoteRequestSchema } from '../types/api.js';
@@ -14,18 +14,57 @@ import { HomeClientMessageSchema } from './types.js';
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HOME_CLIENT_TIMEOUT_MS = 90_000;
 
-type HomeWs = {
-	send: (data: string) => void;
-	close: () => void;
+// ─── uWS Helpers ────────────────────────────────────────────────────────────
+
+const HTTP_STATUS: Record<number, string> = {
+	200: '200 OK',
+	202: '202 Accepted',
+	400: '400 Bad Request',
+	401: '401 Unauthorized',
+	429: '429 Too Many Requests',
+	503: '503 Service Unavailable',
 };
 
+function sendJson(res: HttpResponse, statusCode: number, body: unknown): void {
+	const status = HTTP_STATUS[statusCode] ?? `${statusCode}`;
+	res.cork(() => {
+		res.writeStatus(status).writeHeader('Content-Type', 'application/json').end(JSON.stringify(body));
+	});
+}
+
+function readBody(res: HttpResponse): Promise<string> {
+	return new Promise<string>((resolve) => {
+		let buffer = '';
+		res.onData((chunk, isLast) => {
+			buffer += Buffer.from(chunk).toString();
+			if (isLast) {
+				resolve(buffer);
+			}
+		});
+	});
+}
+
+// ─── WebSocket User Data Types ──────────────────────────────────────────────
+
+type HomeWsData = {
+	authenticated: boolean;
+	isHome: true;
+};
+
+type AgentWsData = {
+	isHome: false;
+};
+
+// ─── Relay Server ───────────────────────────────────────────────────────────
+
 export class RelayServer {
-	private readonly app: HyperExpress.Server;
+	private readonly app: uWS.TemplatedApp;
 	private readonly logger: Logger;
 	private readonly relaySecret: string;
 	private readonly port: number;
 
-	private homeWs: HomeWs | null = null;
+	private listenSocket: us_listen_socket | null = null;
+	private homeWs: WebSocket<HomeWsData> | null = null;
 	private homeConnectedAt: number | null = null;
 	private lastHomeHeartbeatAt: number | null = null;
 	private cachedState: BattleState | null = null;
@@ -36,7 +75,7 @@ export class RelayServer {
 		this.relaySecret = relaySecret;
 		this.port = port;
 		this.logger = logger;
-		this.app = new HyperExpress.Server();
+		this.app = uWS.App();
 		this.setupRoutes();
 	}
 
@@ -86,7 +125,7 @@ export class RelayServer {
 		}
 	}
 
-	private handleHomeAuth(rawMsg: unknown, ws: HomeWs): boolean {
+	private handleHomeAuth(rawMsg: unknown, ws: WebSocket<HomeWsData>): boolean {
 		const msg = rawMsg as { type?: string; secret?: string };
 		if (msg.type === 'auth_home' || (msg.secret !== undefined && msg.type === undefined)) {
 			if (msg.secret !== this.relaySecret) {
@@ -98,7 +137,7 @@ export class RelayServer {
 						message: 'Invalid relay secret',
 					} satisfies RelayMessage),
 				);
-				ws.close();
+				ws.end(1008, 'Auth failed');
 				return false;
 			}
 			return true;
@@ -113,7 +152,7 @@ export class RelayServer {
 		return false;
 	}
 
-	private onHomeAuthenticated(ws: HomeWs): void {
+	private onHomeAuthenticated(ws: WebSocket<HomeWsData>): void {
 		this.homeWs = ws;
 		this.homeConnectedAt = Date.now();
 		this.lastHomeHeartbeatAt = Date.now();
@@ -157,47 +196,7 @@ export class RelayServer {
 		}
 	}
 
-	private setupHomeWsHandler(ws: {
-		on: (event: string, cb: (...args: Array<unknown>) => void) => void;
-		send: (data: string) => void;
-		close: () => void;
-	}): void {
-		let authenticated = false;
-		const homeWs: HomeWs = { send: ws.send.bind(ws), close: ws.close.bind(ws) };
-
-		ws.on('message', (rawMessage: unknown) => {
-			const raw = typeof rawMessage === 'string' ? rawMessage : String(rawMessage);
-			let parsed: unknown;
-			try {
-				parsed = JSON.parse(raw);
-			} catch {
-				this.logger.warn('Home client sent invalid JSON');
-				ws.send(JSON.stringify({ type: 'error', code: 'PARSE_ERROR', message: 'Invalid JSON' } satisfies RelayMessage));
-				return;
-			}
-
-			if (!authenticated) {
-				authenticated = this.handleHomeAuth(parsed, homeWs);
-				if (authenticated) {
-					this.onHomeAuthenticated(homeWs);
-				}
-				return;
-			}
-
-			this.processHomeMessage(parsed, ws);
-		});
-
-		ws.on('close', () => {
-			if (this.homeWs === homeWs) {
-				this.homeWs = null;
-				this.homeConnectedAt = null;
-				this.lastHomeHeartbeatAt = null;
-				this.logger.warn('Home client disconnected');
-			}
-		});
-	}
-
-	private processHomeMessage(parsed: unknown, ws: { send: (data: string) => void }): void {
+	private processHomeMessage(parsed: unknown, ws: WebSocket<HomeWsData>): void {
 		const result = HomeClientMessageSchema.safeParse(parsed);
 		if (!result.success) {
 			this.logger.warn({ error: result.error.flatten() }, 'Invalid home client message');
@@ -214,8 +213,8 @@ export class RelayServer {
 	}
 
 	private setupRoutes(): void {
-		this.app.get('/health', (_req: Request, res: Response) => {
-			res.json({
+		this.app.get('/health', (res: HttpResponse, _req: HttpRequest) => {
+			sendJson(res, 200, {
 				status: 'ok',
 				time: Date.now(),
 				homeConnected: this.isHomeConnected(),
@@ -224,83 +223,110 @@ export class RelayServer {
 			});
 		});
 
-		this.app.ws(
-			'/home/connect',
-			{
-				compression: 0,
-				// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
-				idle_timeout: 120,
-				// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
-				max_backpressure: 4 * 1024 * 1024,
-				// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
-				max_payload_length: 1024 * 1024,
+		this.app.ws<HomeWsData>('/home/connect', {
+			compression: uWS.DISABLED,
+			idleTimeout: 120,
+			maxBackpressure: 4 * 1024 * 1024,
+			maxPayloadLength: 1024 * 1024,
+
+			upgrade: (res, req, context) => {
+				res.upgrade(
+					{ authenticated: false, isHome: true as const },
+					req.getHeader('sec-websocket-key'),
+					req.getHeader('sec-websocket-protocol'),
+					req.getHeader('sec-websocket-extensions'),
+					context,
+				);
 			},
-			(ws) => {
+
+			open: (_ws) => {
 				this.logger.info('Home client WebSocket connecting');
-				this.setupHomeWsHandler(
-					ws as unknown as {
-						on: (event: string, cb: (...args: Array<unknown>) => void) => void;
-						send: (data: string) => void;
-						close: () => void;
-					},
-				);
 			},
-		);
 
-		this.app.ws(
-			'/agent/stream',
-			{
-				compression: 0,
-				// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
-				idle_timeout: 120,
-				// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
-				max_backpressure: 64 * 1024,
-				// biome-ignore lint/style/useNamingConvention: uWebSockets.js API uses snake_case
-				max_payload_length: 4 * 1024,
+			message: (ws, message) => {
+				const raw = Buffer.from(message).toString();
+				let parsed: unknown;
+				try {
+					parsed = JSON.parse(raw);
+				} catch {
+					ws.send(
+						JSON.stringify({
+							type: 'error',
+							code: 'PARSE_ERROR',
+							message: 'Invalid JSON',
+						} satisfies RelayMessage),
+					);
+					return;
+				}
+
+				const data = ws.getUserData();
+				if (!data.authenticated) {
+					data.authenticated = this.handleHomeAuth(parsed, ws);
+					if (data.authenticated) {
+						this.onHomeAuthenticated(ws);
+					}
+					return;
+				}
+
+				this.processHomeMessage(parsed, ws);
 			},
-			(ws) => {
-				this.logger.debug('Agent WebSocket connected');
-				this.setupAgentWsHandler(
-					ws as unknown as {
-						on: (event: string, cb: (...args: Array<unknown>) => void) => void;
-						send: (data: string) => void;
-						subscribe: (topic: string) => void;
-					},
-				);
+
+			close: (ws) => {
+				if (this.homeWs === ws) {
+					this.homeWs = null;
+					this.homeConnectedAt = null;
+					this.lastHomeHeartbeatAt = null;
+					this.logger.warn('Home client disconnected');
+				}
 			},
-		);
-	}
-
-	private setupAgentWsHandler(ws: {
-		on: (event: string, cb: (...args: Array<unknown>) => void) => void;
-		send: (data: string) => void;
-		subscribe: (topic: string) => void;
-	}): void {
-		if (this.cachedState) {
-			const stateMsg: RelayMessage = {
-				type: 'state_update',
-				tickId: this.cachedState.turn,
-				gameId: this.cachedState.gameId,
-				state: this.cachedState,
-			};
-			ws.send(JSON.stringify(stateMsg));
-		}
-
-		ws.subscribe('game-state');
-
-		ws.on('message', (rawMessage: unknown) => {
-			ws.send(
-				JSON.stringify({
-					type: 'error',
-					code: 'NOT_SUPPORTED',
-					message: 'Use REST API for votes',
-				} satisfies RelayMessage),
-			);
-			this.logger.debug({ rawMessage }, 'Agent WebSocket message ignored (read-only stream)');
 		});
 
-		ws.on('close', () => {
-			this.logger.debug('Agent WebSocket disconnected');
+		this.app.ws<AgentWsData>('/agent/stream', {
+			compression: uWS.DISABLED,
+			idleTimeout: 120,
+			maxBackpressure: 64 * 1024,
+			maxPayloadLength: 4 * 1024,
+
+			upgrade: (res, req, context) => {
+				res.upgrade(
+					{ isHome: false as const },
+					req.getHeader('sec-websocket-key'),
+					req.getHeader('sec-websocket-protocol'),
+					req.getHeader('sec-websocket-extensions'),
+					context,
+				);
+			},
+
+			open: (ws) => {
+				this.logger.debug('Agent WebSocket connected');
+
+				if (this.cachedState) {
+					const stateMsg: RelayMessage = {
+						type: 'state_update',
+						tickId: this.cachedState.turn,
+						gameId: this.cachedState.gameId,
+						state: this.cachedState,
+					};
+					ws.send(JSON.stringify(stateMsg));
+				}
+
+				ws.subscribe('game-state');
+			},
+
+			message: (ws) => {
+				ws.send(
+					JSON.stringify({
+						type: 'error',
+						code: 'NOT_SUPPORTED',
+						message: 'Use REST API for votes',
+					} satisfies RelayMessage),
+				);
+				this.logger.debug('Agent WebSocket message ignored (read-only stream)');
+			},
+
+			close: () => {
+				this.logger.debug('Agent WebSocket disconnected');
+			},
 		});
 	}
 
@@ -314,9 +340,18 @@ export class RelayServer {
 	}
 
 	async listen(): Promise<void> {
-		await this.app.listen(this.port);
-		this.startHeartbeat();
-		this.logger.info({ port: this.port }, 'Relay server listening');
+		return new Promise<void>((resolve, reject) => {
+			this.app.listen(this.port, (token) => {
+				if (!token) {
+					reject(new Error(`Failed to listen on port ${this.port}`));
+					return;
+				}
+				this.listenSocket = token;
+				this.startHeartbeat();
+				this.logger.info({ port: this.port }, 'Relay server listening');
+				resolve();
+			});
+		});
 	}
 
 	async close(): Promise<void> {
@@ -324,11 +359,14 @@ export class RelayServer {
 			clearInterval(this.heartbeatTimer);
 			this.heartbeatTimer = null;
 		}
-		await this.app.close();
+		if (this.listenSocket) {
+			uWS.us_listen_socket_close(this.listenSocket);
+			this.listenSocket = null;
+		}
 		this.logger.info('Relay server closed');
 	}
 
-	getApp(): HyperExpress.Server {
+	getApp(): uWS.TemplatedApp {
 		return this.app;
 	}
 
@@ -348,6 +386,38 @@ export class RelayServer {
 
 // ─── Standalone Entry Point ───────────────────────────────────────────────────
 
+async function relayAuthAndRateLimit(
+	res: HttpResponse,
+	rawKey: string,
+	redis: import('ioredis').Redis,
+): Promise<{ agent: import('../types/api.js').ApiKeyMetadata } | null> {
+	if (!rawKey) {
+		sendJson(res, 401, { error: 'Missing API key', code: 'MISSING_AUTH' });
+		return null;
+	}
+	const agent = await lookupApiKey(redis, rawKey);
+	if (!agent) {
+		sendJson(res, 401, { error: 'Invalid API key', code: 'INVALID_AUTH' });
+		return null;
+	}
+
+	const burst = getRateLimitBurst(agent);
+	const rlResult = await checkRateLimit(redis, agent.agentId, agent.rpsLimit, burst);
+
+	if (!rlResult.allowed) {
+		res.cork(() => {
+			res
+				.writeStatus('429 Too Many Requests')
+				.writeHeader('Content-Type', 'application/json')
+				.writeHeader('Retry-After', String(Math.ceil(rlResult.retryAfterMs / 1000)))
+				.end(JSON.stringify({ error: 'Rate limit exceeded', code: 'RATE_LIMITED' }));
+		});
+		return null;
+	}
+
+	return { agent };
+}
+
 export async function startRelayServer(): Promise<RelayServer> {
 	const relayConfig = loadRelayConfig();
 	assertRelayServerConfig(relayConfig);
@@ -360,71 +430,84 @@ export async function startRelayServer(): Promise<RelayServer> {
 	const server = new RelayServer(relayConfig.RELAY_SECRET, relayConfig.RELAY_PORT, logger);
 	const app = server.getApp();
 
-	const authMiddleware = async (req: Request, res: Response): Promise<void> => {
-		const rawKey = req.headers['x-api-key'];
-		if (!rawKey || typeof rawKey !== 'string') {
-			res.status(401).json({ error: 'Missing API key', code: 'MISSING_AUTH' });
-			return;
-		}
-		const agent = await lookupApiKey(redis, rawKey);
-		if (!agent) {
-			res.status(401).json({ error: 'Invalid API key', code: 'INVALID_AUTH' });
-			return;
-		}
-		req.locals[AGENT_LOCALS_KEY] = agent;
-	};
-
-	const rateLimitMiddleware = buildRateLimitMiddleware(redis);
-
-	const apiRouter = new HyperExpress.Router();
-	apiRouter.use(authMiddleware);
-	apiRouter.use(rateLimitMiddleware);
-
-	apiRouter.get('/state', async (_req: Request, res: Response) => {
-		const cached = server.getCachedState();
-		if (!cached) {
-			res.status(503).json({ error: 'Game state unavailable', code: 'STATE_UNAVAILABLE' });
-			return;
-		}
-		res.header('Content-Type', 'application/json');
-		res.send(JSON.stringify(cached));
-	});
-
-	apiRouter.post('/vote', async (req: Request, res: Response) => {
-		const agent = getAgentFromLocals(req);
-		if (!agent) {
-			res.status(401).json({ error: 'Unauthorized', code: 'MISSING_AUTH' });
-			return;
-		}
-
-		const body: unknown = await req.json();
-		const parsed = VoteRequestSchema.safeParse(body);
-		if (!parsed.success) {
-			res.status(400).json({
-				error: 'Invalid request body',
-				code: 'VALIDATION_ERROR',
-				details: parsed.error.flatten(),
-			});
-			return;
-		}
-
-		const { action } = parsed.data;
-
-		server.bufferVote(agent.agentId, {
-			agentId: agent.agentId,
-			action,
-			timestamp: Date.now(),
+	app.get('/api/v1/state', (res: HttpResponse, req: HttpRequest) => {
+		const rawKey = req.getHeader('x-api-key');
+		let aborted = false;
+		res.onAborted(() => {
+			aborted = true;
 		});
 
-		const cached = server.getCachedState();
-		const currentTick = cached?.turn ?? 0;
+		(async () => {
+			const auth = await relayAuthAndRateLimit(res, rawKey, redis);
+			if (!auth || aborted) return;
 
-		logger.debug({ agentId: agent.agentId, action, tick: currentTick }, 'Vote buffered on relay');
+			const cached = server.getCachedState();
+			if (!cached) {
+				sendJson(res, 503, { error: 'Game state unavailable', code: 'STATE_UNAVAILABLE' });
+				return;
+			}
 
-		res.status(202).json({ accepted: true, tick: currentTick, action });
+			res.cork(() => {
+				res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(JSON.stringify(cached));
+			});
+		})().catch((err: unknown) => {
+			logger.error({ err }, 'Error in /api/v1/state handler');
+			if (!aborted) sendJson(res, 500, { error: 'Internal server error' });
+		});
 	});
 
-	app.use('/api/v1', apiRouter);
+	app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
+		const rawKey = req.getHeader('x-api-key');
+		let aborted = false;
+		res.onAborted(() => {
+			aborted = true;
+		});
+
+		readBody(res)
+			.then(async (bodyStr) => {
+				const auth = await relayAuthAndRateLimit(res, rawKey, redis);
+				if (!auth || aborted) return;
+
+				let body: unknown;
+				try {
+					body = JSON.parse(bodyStr);
+				} catch {
+					sendJson(res, 400, { error: 'Invalid JSON', code: 'PARSE_ERROR' });
+					return;
+				}
+
+				const parsed = VoteRequestSchema.safeParse(body);
+				if (!parsed.success) {
+					sendJson(res, 400, {
+						error: 'Invalid request body',
+						code: 'VALIDATION_ERROR',
+						details: parsed.error.flatten(),
+					});
+					return;
+				}
+
+				const { action } = parsed.data;
+
+				server.bufferVote(auth.agent.agentId, {
+					agentId: auth.agent.agentId,
+					action,
+					timestamp: Date.now(),
+				});
+
+				const cached = server.getCachedState();
+				const currentTick = cached?.turn ?? 0;
+
+				logger.debug({ agentId: auth.agent.agentId, action, tick: currentTick }, 'Vote buffered on relay');
+
+				if (!aborted) {
+					sendJson(res, 202, { accepted: true, tick: currentTick, action });
+				}
+			})
+			.catch((err: unknown) => {
+				logger.error({ err }, 'Error in /api/v1/vote handler');
+				if (!aborted) sendJson(res, 500, { error: 'Internal server error' });
+			});
+	});
 
 	await server.listen();
 	logger.info('Relay server started');

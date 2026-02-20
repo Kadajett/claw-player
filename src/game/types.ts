@@ -280,6 +280,8 @@ export type MapLocation = {
 	mapName: string;
 	x: number;
 	y: number;
+	width: number;
+	height: number;
 };
 
 export const mapLocationSchema = z.object({
@@ -287,6 +289,8 @@ export const mapLocationSchema = z.object({
 	mapName: z.string(),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
+	width: z.number().int().min(0),
+	height: z.number().int().min(0),
 });
 
 // ─── NPC Info ─────────────────────────────────────────────────────────────────
@@ -305,6 +309,22 @@ export const npcInfoSchema = z.object({
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 	canTalk: z.boolean(),
+});
+
+// ─── Warp Info ────────────────────────────────────────────────────────────────
+
+export type WarpInfo = {
+	x: number;
+	y: number;
+	destinationMapId: number;
+	destinationMap: string;
+};
+
+export const warpInfoSchema = z.object({
+	x: z.number().int().min(0),
+	y: z.number().int().min(0),
+	destinationMapId: z.number().int().min(0),
+	destinationMap: z.string(),
 });
 
 // ─── Item Info ────────────────────────────────────────────────────────────────
@@ -365,6 +385,7 @@ export type OverworldState = {
 	canMove: boolean;
 	nearbyNpcs: Array<NpcInfo>;
 	nearbyItems: Array<ItemInfo>;
+	warps: Array<WarpInfo>;
 	player: PlayerInfo;
 	menuOpen: string | null;
 	dialogueText: string | null;
@@ -379,6 +400,7 @@ export const overworldStateSchema = z.object({
 	canMove: z.boolean(),
 	nearbyNpcs: z.array(npcInfoSchema),
 	nearbyItems: z.array(itemInfoSchema),
+	warps: z.array(warpInfoSchema),
 	player: playerInfoSchema,
 	menuOpen: z.string().nullable(),
 	dialogueText: z.string().nullable(),

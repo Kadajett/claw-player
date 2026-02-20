@@ -24,13 +24,13 @@
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.11.0",
 		"fast-json-patch": "^3.1.1",
-		"hyper-express": "^6.17.3",
 		"ioredis": "^5.4.2",
 		"jose": "^6.0.8",
 		"msgpackr": "^1.11.2",
 		"pino": "^9.6.0",
 		"pino-pretty": "^13.0.0",
 		"serverboy": "^0.0.7",
+		"uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.57.0",
 		"zod": "^3.24.2"
 	},
 	"devDependencies": {

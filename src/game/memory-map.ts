@@ -13,6 +13,7 @@ import {
 	type PokemonState,
 	PokemonType,
 	StatusCondition,
+	type WarpInfo,
 } from './types.js';
 
 // ─── Pokemon Red Memory Map (English version) ────────────────────────────────
@@ -337,10 +338,30 @@ export const OVERWORLD_NUM_BAG_ITEMS = 0xd31d; // wNumBagItems
 export const OVERWORLD_BAG_ITEMS = 0xd31e; // pairs: (item_id, quantity), terminated 0xFF
 export const OVERWORLD_MAX_BAG_ITEMS = 20; // Gen 1 bag limit
 
+// Warp data
+export const OVERWORLD_NUM_WARPS = 0xd3ae; // wNumberOfWarps
+export const OVERWORLD_WARP_ENTRIES = 0xd3af; // wWarpEntries: 4 bytes each (y, x, warpToIndex, destMapId)
+export const OVERWORLD_WARP_ENTRY_SIZE = 4;
+export const OVERWORLD_MAX_WARPS = 12; // max warps to read per map
+
 // Game state detection
 export const OVERWORLD_JOY_IGNORE = 0xcd6b; // wJoyIgnore: nonzero = input ignored (dialogue/cutscene)
 export const OVERWORLD_CURRENT_MENU = 0xcc26; // wCurrentMenuItem
 export const OVERWORLD_TEXT_DELAY_FLAGS = 0xd358; // wLetterPrintingDelayFlags
+
+// Menu detection
+export const OVERWORLD_TEXT_BOX_ID = 0xd125; // wTextBoxID: identifies active text box / menu type
+export const OVERWORLD_TOP_MENU_ITEM_Y = 0xcc24; // wTopMenuItemY
+export const OVERWORLD_TOP_MENU_ITEM_X = 0xcc25; // wTopMenuItemX
+export const OVERWORLD_MAX_MENU_ITEM = 0xcc2b; // wMaxMenuItem
+
+// Screen tilemap for reading on-screen text
+export const SCREEN_TILEMAP_START = 0xc3a0; // wTileMap: 20x18 grid of tile indices
+export const SCREEN_TILEMAP_WIDTH = 20;
+export const SCREEN_TILEMAP_HEIGHT = 18;
+// Dialogue text box: rows 14-15 (the two main text lines inside the box border)
+export const SCREEN_TEXT_ROW_START = 14;
+export const SCREEN_TEXT_ROW_COUNT = 2;
 
 // Sprite data offsets within each 16-byte entry
 const SPRITE1_PICTURE_ID = 0; // 0 = no sprite present
@@ -431,7 +452,17 @@ const POKEMON_TEXT_MAP: ReadonlyMap<number, string> = new Map([
 	[0xff, '9'],
 	// Special characters
 	[0xe0, "'"],
+	[0xe1, 'PK'],
+	[0xe2, 'MN'],
 	[0xe3, '-'],
+	[0xe4, '?'],
+	[0xe5, '!'],
+	[0xe6, '.'],
+	[0xba, 'e'], // é used in POKéMON (renders as plain 'e')
+	[0xf0, ':'],
+	[0xf1, ';'],
+	[0xf2, '['],
+	[0xf3, ']'],
 	[0xf4, '.'],
 	[0xf5, '/'],
 ]);
@@ -667,6 +698,117 @@ export function readNearbySprites(ram: ReadonlyArray<number>): Array<NpcInfo> {
 	return sprites;
 }
 
+export function readWarps(ram: ReadonlyArray<number>): Array<WarpInfo> {
+	const numWarps = Math.min(ram[OVERWORLD_NUM_WARPS] ?? 0, OVERWORLD_MAX_WARPS);
+	const warps: Array<WarpInfo> = [];
+	for (let i = 0; i < numWarps; i++) {
+		const offset = OVERWORLD_WARP_ENTRIES + i * OVERWORLD_WARP_ENTRY_SIZE;
+		const y = ram[offset] ?? 0;
+		const x = ram[offset + 1] ?? 0;
+		const destMapId = ram[offset + 3] ?? 0;
+		warps.push({
+			x,
+			y,
+			destinationMapId: destMapId,
+			destinationMap: decodeMapName(destMapId),
+		});
+	}
+	return warps;
+}
+
+// Pokemon Red tilemap: cursor arrow tile
+const TILE_CURSOR_ARROW = 0xed; // ▶ selector arrow
+// Box border tiles (indicate a menu/text box is drawn on screen)
+const TILE_BOX_TOP_LEFT = 0x79;
+const TILE_BOX_TOP_RIGHT = 0x7b;
+const TILE_BOX_BOTTOM_LEFT = 0x7e;
+const TILE_BOX_VERT_LEFT = 0x7c;
+
+/**
+ * Read a row of text from the tilemap, decoding Pokemon text encoding.
+ * Unmapped tiles become spaces to preserve the visual layout from the screen.
+ */
+function readTilemapRow(ram: ReadonlyArray<number>, row: number, colStart: number, colEnd: number): string {
+	let line = '';
+	for (let col = colStart; col < colEnd; col++) {
+		const addr = SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH + col;
+		const tileId = ram[addr] ?? 0;
+		if (tileId === TILE_CURSOR_ARROW) {
+			line += '>';
+		} else {
+			const char = POKEMON_TEXT_MAP.get(tileId);
+			line += char ?? ' ';
+		}
+	}
+	return line.trim();
+}
+
+/**
+ * Read on-screen dialogue text from the bottom of the screen.
+ * Dialogue boxes use rows 12-17 (border on 12/17, text on 13-16).
+ */
+export function readScreenText(ram: ReadonlyArray<number>): string | null {
+	// Check if there's a text box border at the bottom of the screen
+	const bottomLeftCorner = ram[SCREEN_TILEMAP_START + 12 * SCREEN_TILEMAP_WIDTH] ?? 0;
+	if (bottomLeftCorner !== TILE_BOX_TOP_LEFT && bottomLeftCorner !== TILE_BOX_VERT_LEFT) {
+		return null; // No dialogue box on screen
+	}
+
+	const lines: Array<string> = [];
+	// Read text rows inside the dialogue box (rows 14-15 are the main text area)
+	for (let row = 14; row <= 15; row++) {
+		const text = readTilemapRow(ram, row, 1, SCREEN_TILEMAP_WIDTH - 1);
+		if (text.length > 0) {
+			lines.push(text);
+		}
+	}
+
+	return lines.length > 0 ? lines.join('\n') : null;
+}
+
+/**
+ * Detect menus by scanning the tilemap for box borders with a cursor arrow (>).
+ * Returns the raw screen text inside the menu box, same format as dialogue.
+ * The cursor arrow appears as ">" so the agent sees exactly what's on screen.
+ * Skips dialogue boxes (no cursor) to avoid duplicating dialogueText.
+ */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: full-screen tilemap scan for menu box detection
+export function readMenuState(ram: ReadonlyArray<number>): string | null {
+	for (let row = 0; row < SCREEN_TILEMAP_HEIGHT - 2; row++) {
+		for (let col = 0; col < SCREEN_TILEMAP_WIDTH; col++) {
+			const addr = SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH + col;
+			if ((ram[addr] ?? 0) !== TILE_BOX_TOP_LEFT) continue;
+
+			// Find right edge of this box
+			let rightCol = SCREEN_TILEMAP_WIDTH;
+			for (let c = col + 1; c < SCREEN_TILEMAP_WIDTH; c++) {
+				if ((ram[SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH + c] ?? 0) === TILE_BOX_TOP_RIGHT) {
+					rightCol = c;
+					break;
+				}
+			}
+
+			// Read all text rows inside the box until bottom border
+			const lines: Array<string> = [];
+			let hasCursor = false;
+			for (let r = row + 1; r < SCREEN_TILEMAP_HEIGHT; r++) {
+				const leftTile = ram[SCREEN_TILEMAP_START + r * SCREEN_TILEMAP_WIDTH + col] ?? 0;
+				if (leftTile === TILE_BOX_BOTTOM_LEFT) break;
+				const line = readTilemapRow(ram, r, col + 1, rightCol);
+				if (line.includes('>')) hasCursor = true;
+				if (line.length > 0) lines.push(line);
+			}
+
+			// Only return boxes that have a cursor (interactive menus, not info boxes)
+			if (hasCursor && lines.length > 0) {
+				return lines.join('\n');
+			}
+		}
+	}
+
+	return null;
+}
+
 export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 	// Check battle first (most specific)
 	const battleType = ram[ADDR_BATTLE_TYPE] ?? 0;
@@ -674,16 +816,12 @@ export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 		return GamePhase.Battle;
 	}
 
-	// Check if input is being ignored (dialogue or cutscene)
+	// wJoyIgnore (0xcd6b): non-zero when input is blocked (dialogue, cutscene, text printing)
+	// Note: OVERWORLD_TEXT_DELAY_FLAGS (0xd358) is the text speed SETTING, not a dialogue indicator
 	const joyIgnore = ram[OVERWORLD_JOY_IGNORE] ?? 0;
-	const textFlags = ram[OVERWORLD_TEXT_DELAY_FLAGS] ?? 0;
-
-	if (textFlags !== 0) {
-		return GamePhase.Dialogue;
-	}
 
 	if (joyIgnore !== 0) {
-		return GamePhase.Cutscene;
+		return GamePhase.Dialogue;
 	}
 
 	return GamePhase.Overworld;
@@ -693,12 +831,16 @@ export function extractOverworldState(ram: ReadonlyArray<number>): OverworldStat
 	const mapId = ram[OVERWORLD_CUR_MAP] ?? 0;
 	const playerX = ram[OVERWORLD_X_COORD] ?? 0;
 	const playerY = ram[OVERWORLD_Y_COORD] ?? 0;
+	const mapHeight = ram[OVERWORLD_MAP_HEIGHT] ?? 0;
+	const mapWidth = ram[OVERWORLD_MAP_WIDTH] ?? 0;
 
 	const location: MapLocation = {
 		mapId,
 		mapName: decodeMapName(mapId),
 		x: playerX,
 		y: playerY,
+		width: mapWidth,
+		height: mapHeight,
 	};
 
 	const dirByte = ram[OVERWORLD_PLAYER_DIR] ?? 0;
@@ -720,6 +862,7 @@ export function extractOverworldState(ram: ReadonlyArray<number>): OverworldStat
 		canMove,
 		nearbyNpcs: readNearbySprites(ram),
 		nearbyItems: [], // overworld item detection requires map object data
+		warps: readWarps(ram),
 		player: {
 			name: readPlayerName(ram),
 			money: readMoney(ram),
@@ -727,8 +870,8 @@ export function extractOverworldState(ram: ReadonlyArray<number>): OverworldStat
 			inventory: readInventory(ram),
 			party: [], // full party extraction requires party RAM addresses
 		},
-		menuOpen: null,
-		dialogueText: null,
+		menuOpen: readMenuState(ram),
+		dialogueText: readScreenText(ram),
 		secondsRemaining: 0,
 	};
 }

@@ -19,12 +19,15 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Redis } from 'ioredis';
 import pino from 'pino';
+import type { GameBoyEmulator } from '../game/emulator-interface.js';
 import type { GameStateService } from '../types/mcp.js';
 import { validateApiKey } from './auth-middleware.js';
 import { requestContext } from './request-context.js';
 import { registerGetGameStateTool } from './tools/get-game-state.js';
 import { registerGetHistoryTool } from './tools/get-history.js';
+import { registerGetOverworldStateTool } from './tools/get-overworld-state.js';
 import { registerGetRateLimitTool } from './tools/get-rate-limit.js';
+import { registerPressButtonTool } from './tools/press-button.js';
 import { registerSubmitActionTool } from './tools/submit-action.js';
 
 const logger = pino({ name: 'mcp-server' });
@@ -35,16 +38,19 @@ const SERVER_VERSION = '0.1.0';
 export interface McpServerOptions {
 	redis: Redis;
 	gameStateService: GameStateService;
+	emulator: GameBoyEmulator;
 	port: number;
 	host: string;
 }
 
-function createFreshMcpServer(service: GameStateService): McpServer {
+function createFreshMcpServer(service: GameStateService, emulator: GameBoyEmulator): McpServer {
 	const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 	registerGetGameStateTool(server, service);
 	registerSubmitActionTool(server, service);
 	registerGetRateLimitTool(server, service);
 	registerGetHistoryTool(server, service);
+	registerPressButtonTool(server, emulator);
+	registerGetOverworldStateTool(server, emulator);
 	return server;
 }
 
@@ -75,6 +81,7 @@ async function handleMcpRequest(
 	res: ServerResponse,
 	redis: Redis,
 	service: GameStateService,
+	emulator: GameBoyEmulator,
 ): Promise<void> {
 	const authResult = await validateApiKey(req, redis);
 
@@ -95,7 +102,7 @@ async function handleMcpRequest(
 		return;
 	}
 
-	const mcpServer = createFreshMcpServer(service);
+	const mcpServer = createFreshMcpServer(service, emulator);
 	// Omitting sessionIdGenerator enables stateless mode per SDK docs
 	const transport = new StreamableHTTPServerTransport({});
 
@@ -120,7 +127,7 @@ async function handleMcpRequest(
 }
 
 export function createMcpHttpServer(options: McpServerOptions): http.Server {
-	const { redis, gameStateService, port, host } = options;
+	const { redis, gameStateService, emulator, port, host } = options;
 
 	const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
 		const url = req.url ?? '/';
@@ -137,7 +144,7 @@ export function createMcpHttpServer(options: McpServerOptions): http.Server {
 
 		// MCP endpoint — accepts POST (JSON-RPC), GET (SSE), DELETE (session close)
 		if (url === '/mcp' || url.startsWith('/mcp?')) {
-			await handleMcpRequest(req, res, redis, gameStateService);
+			await handleMcpRequest(req, res, redis, gameStateService, emulator);
 			return;
 		}
 
