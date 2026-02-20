@@ -682,6 +682,50 @@ export function extractBattleState(ram: ReadonlyArray<number>, gameId: string, t
 	};
 }
 
+// ─── HM Detection (Section 22) ───────────────────────────────────────────────
+export const ADDR_H_TILESET_TYPE = 0xffd7; // hTilesetType: 2 = outside (needed for Fly)
+export const ADDR_MAP_PAL_OFFSET = 0xd35d; // wMapPalOffset: 6 = dark cave (needed for Flash)
+
+// HM move IDs (from pret/pokered)
+const HM_MOVE_CUT = 15;
+const HM_MOVE_FLY = 19;
+const HM_MOVE_SURF = 57;
+const HM_MOVE_STRENGTH = 70;
+const HM_MOVE_FLASH = 148;
+
+// Badge bit positions in wObtainedBadges (0xD356)
+const BADGE_BIT_BOULDER = 0; // required for Flash
+const BADGE_BIT_CASCADE = 1; // required for Cut
+const BADGE_BIT_THUNDER = 2; // required for Fly
+const BADGE_BIT_RAINBOW = 3; // required for Strength
+const BADGE_BIT_SOUL = 4; // required for Surf
+
+// Environment constants for HM context checks
+const TILESET_OUTSIDE = 2;
+const MAP_PAL_DARK_CAVE = 6;
+const TILE_WATER = 0x14;
+
+// ─── Game Progress (Section 20) ──────────────────────────────────────────────
+export const ADDR_PLAY_TIME_HOURS_HIGH = 0xda41; // wPlayTimeHours (high byte)
+export const ADDR_PLAY_TIME_HOURS_LOW = 0xda42; // wPlayTimeHoursLow (combine with high for >255h)
+export const ADDR_PLAY_TIME_MINUTES = 0xda43; // wPlayTimeMinutes (0-59)
+export const ADDR_PLAY_TIME_SECONDS = 0xda44; // wPlayTimeSeconds (0-59)
+export const ADDR_PLAY_TIME_FRAMES = 0xda45; // wPlayTimeFrames (0-59)
+
+// ─── Pokedex Data (Section 20) ───────────────────────────────────────────────
+export const ADDR_POKEDEX_OWNED_START = 0xd2f7; // wPokedexOwned: 19 bytes bitfield (151 Pokemon)
+export const ADDR_POKEDEX_SEEN_START = 0xd30a; // wPokedexSeen: 19 bytes bitfield (151 Pokemon)
+export const POKEDEX_BYTES = 19; // 19 bytes per bitfield (152 bits, only 151 used)
+
+// ─── Wild Encounters (Section 16) ────────────────────────────────────────────
+export const ADDR_GRASS_RATE = 0xd887; // wGrassRate: wild encounter rate (0-255, 0 = none)
+export const ADDR_GRASS_MONS_START = 0xd888; // wGrassMons: 10 [level, species] pairs (20 bytes)
+export const GRASS_MON_SLOTS = 10;
+
+// ─── Joypad State (Section 8) ────────────────────────────────────────────────
+export const ADDR_JOY_PRESSED = 0xffb3; // hJoyPressed: new button presses this frame
+export const ADDR_JOY_HELD = 0xffb4; // hJoyHeld: currently held buttons
+
 // ─── Pokemon Red Overworld Memory Map ────────────────────────────────────────
 // Addresses from the pret/pokered disassembly project
 
@@ -1296,4 +1340,121 @@ export function extractOverworldState(ram: ReadonlyArray<number>): OverworldStat
 		dialogueText: readScreenText(ram),
 		secondsRemaining: 0,
 	};
+}
+
+// ─── HM Availability ─────────────────────────────────────────────────────────
+
+export type HmAvailability = {
+	cut: boolean;
+	fly: boolean;
+	surf: boolean;
+	strength: boolean;
+	flash: boolean;
+};
+
+/**
+ * Check if any party Pokemon knows a specific move by raw move ID.
+ */
+function partyKnowsMove(ram: ReadonlyArray<number>, moveId: number): boolean {
+	const count = Math.min(ram[ADDR_PARTY_COUNT] ?? 0, 6);
+	for (let i = 0; i < count; i++) {
+		const base = ADDR_PARTY_MONS + i * PARTY_MON_SIZE;
+		for (let m = 0; m < 4; m++) {
+			if ((ram[base + 0x08 + m] ?? 0) === moveId) return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Check HM usability: each HM requires the right badge, a party Pokemon
+ * knowing the move, and (for some HMs) the right environment context.
+ *
+ * - Cut: CascadeBadge (bit 1) + party knows Cut (move 15)
+ * - Fly: ThunderBadge (bit 2) + party knows Fly (move 19) + outside tileset
+ * - Surf: SoulBadge (bit 4) + party knows Surf (move 57) + facing water tile
+ * - Strength: RainbowBadge (bit 3) + party knows Strength (move 70)
+ * - Flash: BoulderBadge (bit 0) + party knows Flash (move 148) + dark cave
+ */
+export function readHmAvailability(ram: ReadonlyArray<number>): HmAvailability {
+	const badges = ram[OVERWORLD_BADGES] ?? 0;
+	const tilesetType = ram[ADDR_H_TILESET_TYPE] ?? 0;
+	const mapPalOffset = ram[ADDR_MAP_PAL_OFFSET] ?? 0;
+	const tileInFront = ram[ADDR_TILE_IN_FRONT_OF_PLAYER] ?? 0;
+
+	return {
+		cut: Boolean(badges & (1 << BADGE_BIT_CASCADE)) && partyKnowsMove(ram, HM_MOVE_CUT),
+		fly:
+			Boolean(badges & (1 << BADGE_BIT_THUNDER)) && partyKnowsMove(ram, HM_MOVE_FLY) && tilesetType === TILESET_OUTSIDE,
+		surf: Boolean(badges & (1 << BADGE_BIT_SOUL)) && partyKnowsMove(ram, HM_MOVE_SURF) && tileInFront === TILE_WATER,
+		strength: Boolean(badges & (1 << BADGE_BIT_RAINBOW)) && partyKnowsMove(ram, HM_MOVE_STRENGTH),
+		flash:
+			Boolean(badges & (1 << BADGE_BIT_BOULDER)) &&
+			partyKnowsMove(ram, HM_MOVE_FLASH) &&
+			mapPalOffset === MAP_PAL_DARK_CAVE,
+	};
+}
+
+// ─── Game Progress & Pokedex ─────────────────────────────────────────────────
+
+export type GameProgress = {
+	playTimeHours: number;
+	playTimeMinutes: number;
+	playTimeSeconds: number;
+	pokedexOwned: number;
+	pokedexSeen: number;
+};
+
+/**
+ * Count set bits across a contiguous byte range (used for Pokedex bitfields).
+ */
+function countSetBits(ram: ReadonlyArray<number>, startAddr: number, byteCount: number): number {
+	let count = 0;
+	for (let i = 0; i < byteCount; i++) {
+		let byte = ram[startAddr + i] ?? 0;
+		while (byte) {
+			count += byte & 1;
+			byte >>= 1;
+		}
+	}
+	return count;
+}
+
+/**
+ * Count Pokemon owned and seen from the Pokedex bitfields.
+ * Each bitfield is 19 bytes (151 Pokemon, 8 bits per byte). Maximum 151 each.
+ */
+export function readPokedexCounts(ram: ReadonlyArray<number>): { owned: number; seen: number } {
+	return {
+		owned: countSetBits(ram, ADDR_POKEDEX_OWNED_START, POKEDEX_BYTES),
+		seen: countSetBits(ram, ADDR_POKEDEX_SEEN_START, POKEDEX_BYTES),
+	};
+}
+
+/**
+ * Read game progress: play time and Pokedex counts.
+ * Hours combine high byte (0xDA41) and low byte (0xDA42) for values >255.
+ */
+export function readGameProgress(ram: ReadonlyArray<number>): GameProgress {
+	const hoursHigh = ram[ADDR_PLAY_TIME_HOURS_HIGH] ?? 0;
+	const hoursLow = ram[ADDR_PLAY_TIME_HOURS_LOW] ?? 0;
+	const { owned, seen } = readPokedexCounts(ram);
+
+	return {
+		playTimeHours: (hoursHigh << 8) | hoursLow,
+		playTimeMinutes: ram[ADDR_PLAY_TIME_MINUTES] ?? 0,
+		playTimeSeconds: ram[ADDR_PLAY_TIME_SECONDS] ?? 0,
+		pokedexOwned: owned,
+		pokedexSeen: seen,
+	};
+}
+
+// ─── Wild Encounters ─────────────────────────────────────────────────────────
+
+/**
+ * Read the wild encounter rate for the current map.
+ * Returns 0 if no wild encounters on this map, 1-255 otherwise.
+ */
+export function readWildEncounterRate(ram: ReadonlyArray<number>): number {
+	return ram[ADDR_GRASS_RATE] ?? 0;
 }

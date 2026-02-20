@@ -261,6 +261,18 @@ export class MgbaEmulator implements GameBoyEmulator {
 			0xd31d, // num bag items
 			// Party data
 			0xd163, // wPartyCount
+			// HM detection
+			0xffd7, // hTilesetType
+			0xd35d, // wMapPalOffset
+			// Game time (5 bytes)
+			0xda41,
+			0xda42,
+			0xda43,
+			0xda44,
+			0xda45,
+			// Joypad
+			0xffb3,
+			0xffb4,
 		];
 
 		// wPartySpecies: 7 bytes at 0xD164 (6 species + FF terminator)
@@ -292,6 +304,22 @@ export class MgbaEmulator implements GameBoyEmulator {
 				base + 0x22,
 				base + 0x23, // max HP high/low
 			);
+		}
+
+		// Pokedex owned (19 bytes at 0xD2F7)
+		for (let i = 0; i < 19; i++) {
+			addresses.push(0xd2f7 + i);
+		}
+
+		// Pokedex seen (19 bytes at 0xD30A)
+		for (let i = 0; i < 19; i++) {
+			addresses.push(0xd30a + i);
+		}
+
+		// Wild encounter rate + slots (21 bytes: 1 rate + 10 [level, species] pairs)
+		addresses.push(0xd887);
+		for (let i = 0; i < 20; i++) {
+			addresses.push(0xd888 + i);
 		}
 
 		// Screen tilemap (wTileMap): 20x18 grid at 0xC3A0 (360 bytes)
