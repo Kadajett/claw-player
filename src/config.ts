@@ -10,6 +10,8 @@ const envSchema = z.object({
 	RATE_LIMIT_BURST: z.coerce.number().int().min(1).max(100).default(30),
 	LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 	JWT_SECRET: z.string().min(32).optional(),
+	// Path to Pokemon Red ROM file - users must supply their own legally obtained copy
+	POKEMON_RED_ROM_PATH: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;
