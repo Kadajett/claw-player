@@ -4,29 +4,42 @@ import {
 	ADDR_BATTLE_TURN_COUNT,
 	ADDR_BATTLE_TYPE,
 	ADDR_CRITICAL_OHKO_FLAG,
+	ADDR_CUR_OPPONENT,
+	ADDR_ENEMY_ATTACK,
 	ADDR_ENEMY_ATTACK_MOD,
 	ADDR_ENEMY_BATTLE_STATUS1,
 	ADDR_ENEMY_BATTLE_STATUS2,
 	ADDR_ENEMY_BATTLE_STATUS3,
+	ADDR_ENEMY_DEFENSE,
 	ADDR_ENEMY_HP_HIGH,
 	ADDR_ENEMY_MAX_HP_HIGH,
+	ADDR_ENEMY_MOVES,
+	ADDR_ENEMY_PARTY_COUNT,
+	ADDR_ENEMY_PP,
+	ADDR_ENEMY_SPECIAL,
+	ADDR_ENEMY_SPEED,
 	ADDR_ENEMY_SUBSTITUTE_HP,
 	ADDR_IN_BATTLE,
 	ADDR_PLAYER_ACCURACY_MOD,
+	ADDR_PLAYER_ATTACK,
 	ADDR_PLAYER_ATTACK_MOD,
 	ADDR_PLAYER_BATTLE_STATUS1,
 	ADDR_PLAYER_BATTLE_STATUS2,
 	ADDR_PLAYER_BATTLE_STATUS3,
 	ADDR_PLAYER_CONFUSION_COUNTER,
+	ADDR_PLAYER_DEFENSE,
 	ADDR_PLAYER_DEFENSE_MOD,
 	ADDR_PLAYER_EVASION_MOD,
 	ADDR_PLAYER_HP_HIGH,
 	ADDR_PLAYER_LEVEL,
+	ADDR_PLAYER_SPECIAL,
 	ADDR_PLAYER_SPECIAL_MOD,
 	ADDR_PLAYER_SPECIES,
+	ADDR_PLAYER_SPEED,
 	ADDR_PLAYER_SPEED_MOD,
 	ADDR_PLAYER_SUBSTITUTE_HP,
 	ADDR_PLAYER_TOXIC_COUNTER,
+	ADDR_TRAINER_CLASS,
 	OVERWORLD_BADGES,
 	OVERWORLD_BAG_ITEMS,
 	OVERWORLD_CUR_MAP,
@@ -51,17 +64,23 @@ import {
 	decodeTypes,
 	detectGamePhase,
 	extractBattleState,
+	extractEnemyBattleStats,
+	extractEnemyMoves,
 	extractOpponentPokemon,
 	extractOverworldState,
+	extractPlayerBattleStats,
 	extractPlayerPokemon,
 	isInBattle,
+	isTrainerBattle,
 	readBadges,
 	readBattleStatusFlags,
+	readEnemyPartyCount,
 	readInventory,
 	readMoney,
 	readNearbySprites,
 	readPlayerName,
 	readStatModifiers,
+	readTrainerClass,
 } from './memory-map.js';
 import { GamePhase, PokemonType, StatusCondition } from './types.js';
 
@@ -1014,5 +1033,239 @@ describe('misc battle address constants', () => {
 		expect(ADDR_CRITICAL_OHKO_FLAG).toBe(0xd05e);
 		expect(ADDR_PLAYER_CONFUSION_COUNTER).toBe(0xd06b);
 		expect(ADDR_PLAYER_TOXIC_COUNTER).toBe(0xd06c);
+	});
+});
+
+describe('extractPlayerBattleStats', () => {
+	it('reads 4 big-endian 16-bit values from player stat addresses', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_ATTACK]: 0x00,
+			[ADDR_PLAYER_ATTACK + 1]: 0x82, // 130
+			[ADDR_PLAYER_DEFENSE]: 0x00,
+			[ADDR_PLAYER_DEFENSE + 1]: 0x6e, // 110
+			[ADDR_PLAYER_SPEED]: 0x01,
+			[ADDR_PLAYER_SPEED + 1]: 0x04, // 260
+			[ADDR_PLAYER_SPECIAL]: 0x00,
+			[ADDR_PLAYER_SPECIAL + 1]: 0x5a, // 90
+		});
+		const stats = extractPlayerBattleStats(ram);
+		expect(stats.attack).toBe(130);
+		expect(stats.defense).toBe(110);
+		expect(stats.speed).toBe(260);
+		expect(stats.special).toBe(90);
+	});
+
+	it('returns 0 for all stats when RAM is zeroed', () => {
+		const ram = makeRam();
+		const stats = extractPlayerBattleStats(ram);
+		expect(stats.attack).toBe(0);
+		expect(stats.defense).toBe(0);
+		expect(stats.speed).toBe(0);
+		expect(stats.special).toBe(0);
+	});
+});
+
+describe('extractEnemyBattleStats', () => {
+	it('reads 4 big-endian 16-bit values from enemy stat addresses', () => {
+		const ram = makeRam({
+			[ADDR_ENEMY_ATTACK]: 0x00,
+			[ADDR_ENEMY_ATTACK + 1]: 0x64, // 100
+			[ADDR_ENEMY_DEFENSE]: 0x00,
+			[ADDR_ENEMY_DEFENSE + 1]: 0x50, // 80
+			[ADDR_ENEMY_SPEED]: 0x00,
+			[ADDR_ENEMY_SPEED + 1]: 0x37, // 55
+			[ADDR_ENEMY_SPECIAL]: 0x00,
+			[ADDR_ENEMY_SPECIAL + 1]: 0xc8, // 200
+		});
+		const stats = extractEnemyBattleStats(ram);
+		expect(stats.attack).toBe(100);
+		expect(stats.defense).toBe(80);
+		expect(stats.speed).toBe(55);
+		expect(stats.special).toBe(200);
+	});
+});
+
+describe('extractEnemyMoves', () => {
+	it('returns array of move data with name lookup', () => {
+		// Tackle = 0x21 (33), Growl = 0x2D (45)
+		const ram = makeRam({
+			[ADDR_ENEMY_MOVES]: 0x21, // Tackle
+			[ADDR_ENEMY_MOVES + 1]: 0x2d, // Growl
+			[ADDR_ENEMY_MOVES + 2]: 0x00, // empty
+			[ADDR_ENEMY_MOVES + 3]: 0x00, // empty
+			[ADDR_ENEMY_PP]: 35,
+			[ADDR_ENEMY_PP + 1]: 40,
+		});
+		const moves = extractEnemyMoves(ram);
+		expect(moves.length).toBe(2);
+		expect(moves[0]?.name).toBe('Tackle');
+		expect(moves[0]?.pp).toBe(35);
+		expect(moves[1]?.name).toBe('Growl');
+		expect(moves[1]?.pp).toBe(40);
+	});
+
+	it('skips empty move slots (move ID = 0)', () => {
+		const ram = makeRam({
+			[ADDR_ENEMY_MOVES]: 0x21, // Tackle
+			[ADDR_ENEMY_MOVES + 1]: 0x00, // empty
+		});
+		const moves = extractEnemyMoves(ram);
+		expect(moves.length).toBe(1);
+	});
+
+	it('returns Struggle when all slots are empty', () => {
+		const ram = makeRam();
+		const moves = extractEnemyMoves(ram);
+		expect(moves.length).toBe(1);
+		expect(moves[0]?.name).toBe('Struggle');
+	});
+});
+
+describe('extractPlayerPokemon battle stats', () => {
+	it('uses real RAM stats instead of estimated values', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_SPECIES]: 0x54, // Pikachu
+			[ADDR_PLAYER_LEVEL]: 25,
+			[ADDR_PLAYER_HP_HIGH]: 0x00,
+			[ADDR_PLAYER_HP_HIGH + 1]: 50,
+			[ADDR_PLAYER_ATTACK]: 0x00,
+			[ADDR_PLAYER_ATTACK + 1]: 55,
+			[ADDR_PLAYER_DEFENSE]: 0x00,
+			[ADDR_PLAYER_DEFENSE + 1]: 30,
+			[ADDR_PLAYER_SPEED]: 0x00,
+			[ADDR_PLAYER_SPEED + 1]: 90,
+			[ADDR_PLAYER_SPECIAL]: 0x00,
+			[ADDR_PLAYER_SPECIAL + 1]: 50,
+		});
+		const pokemon = extractPlayerPokemon(ram);
+		expect(pokemon.attack).toBe(55);
+		expect(pokemon.defense).toBe(30);
+		expect(pokemon.speed).toBe(90);
+		expect(pokemon.specialAttack).toBe(50);
+		expect(pokemon.specialDefense).toBe(50);
+	});
+
+	it('maps Gen1 Special to both specialAttack and specialDefense', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_SPECIES]: 0x54,
+			[ADDR_PLAYER_LEVEL]: 25,
+			[ADDR_PLAYER_SPECIAL]: 0x00,
+			[ADDR_PLAYER_SPECIAL + 1]: 65,
+			[ADDR_PLAYER_ATTACK]: 0x00,
+			[ADDR_PLAYER_ATTACK + 1]: 1,
+			[ADDR_PLAYER_DEFENSE]: 0x00,
+			[ADDR_PLAYER_DEFENSE + 1]: 1,
+			[ADDR_PLAYER_SPEED]: 0x00,
+			[ADDR_PLAYER_SPEED + 1]: 1,
+		});
+		const pokemon = extractPlayerPokemon(ram);
+		expect(pokemon.specialAttack).toBe(65);
+		expect(pokemon.specialDefense).toBe(65);
+	});
+
+	it('falls back to 1 when stat is 0 in RAM', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_SPECIES]: 0x54,
+			[ADDR_PLAYER_LEVEL]: 5,
+		});
+		const pokemon = extractPlayerPokemon(ram);
+		expect(pokemon.attack).toBe(1);
+		expect(pokemon.defense).toBe(1);
+		expect(pokemon.speed).toBe(1);
+		expect(pokemon.specialAttack).toBe(1);
+		expect(pokemon.specialDefense).toBe(1);
+	});
+});
+
+describe('extractOpponentPokemon battle stats', () => {
+	it('includes enemy battle stats from RAM', () => {
+		const ram = makeRam({
+			[ADDR_ENEMY_HP_HIGH]: 0x00,
+			[ADDR_ENEMY_HP_HIGH + 1]: 100,
+			[ADDR_ENEMY_MAX_HP_HIGH]: 0x00,
+			[ADDR_ENEMY_MAX_HP_HIGH + 1]: 100,
+			[ADDR_ENEMY_ATTACK]: 0x00,
+			[ADDR_ENEMY_ATTACK + 1]: 80,
+			[ADDR_ENEMY_DEFENSE]: 0x00,
+			[ADDR_ENEMY_DEFENSE + 1]: 70,
+			[ADDR_ENEMY_SPEED]: 0x00,
+			[ADDR_ENEMY_SPEED + 1]: 95,
+			[ADDR_ENEMY_SPECIAL]: 0x00,
+			[ADDR_ENEMY_SPECIAL + 1]: 60,
+		});
+		const opponent = extractOpponentPokemon(ram);
+		expect(opponent.attack).toBe(80);
+		expect(opponent.defense).toBe(70);
+		expect(opponent.speed).toBe(95);
+		expect(opponent.specialAttack).toBe(60);
+		expect(opponent.specialDefense).toBe(60);
+	});
+
+	it('includes enemy moves', () => {
+		const ram = makeRam({
+			[ADDR_ENEMY_HP_HIGH]: 0x00,
+			[ADDR_ENEMY_HP_HIGH + 1]: 50,
+			[ADDR_ENEMY_MAX_HP_HIGH]: 0x00,
+			[ADDR_ENEMY_MAX_HP_HIGH + 1]: 50,
+			[ADDR_ENEMY_MOVES]: 0x21, // Tackle
+			[ADDR_ENEMY_PP]: 35,
+			[ADDR_ENEMY_ATTACK]: 0x00,
+			[ADDR_ENEMY_ATTACK + 1]: 1,
+			[ADDR_ENEMY_DEFENSE]: 0x00,
+			[ADDR_ENEMY_DEFENSE + 1]: 1,
+			[ADDR_ENEMY_SPEED]: 0x00,
+			[ADDR_ENEMY_SPEED + 1]: 1,
+			[ADDR_ENEMY_SPECIAL]: 0x00,
+			[ADDR_ENEMY_SPECIAL + 1]: 1,
+		});
+		const opponent = extractOpponentPokemon(ram);
+		expect(opponent.moves.length).toBeGreaterThan(0);
+		expect(opponent.moves[0]?.name).toBe('Tackle');
+	});
+});
+
+describe('isTrainerBattle', () => {
+	it('returns true when wCurOpponent >= 200', () => {
+		const ram = makeRam({ [ADDR_CUR_OPPONENT]: 200 });
+		expect(isTrainerBattle(ram)).toBe(true);
+	});
+
+	it('returns true for high trainer values', () => {
+		const ram = makeRam({ [ADDR_CUR_OPPONENT]: 255 });
+		expect(isTrainerBattle(ram)).toBe(true);
+	});
+
+	it('returns false when wCurOpponent < 200 (wild encounter)', () => {
+		const ram = makeRam({ [ADDR_CUR_OPPONENT]: 199 });
+		expect(isTrainerBattle(ram)).toBe(false);
+	});
+
+	it('returns false for 0 (no opponent)', () => {
+		const ram = makeRam({ [ADDR_CUR_OPPONENT]: 0 });
+		expect(isTrainerBattle(ram)).toBe(false);
+	});
+});
+
+describe('readTrainerClass', () => {
+	it('reads trainer class from RAM', () => {
+		const ram = makeRam({ [ADDR_TRAINER_CLASS]: 42 });
+		expect(readTrainerClass(ram)).toBe(42);
+	});
+
+	it('returns 0 when no trainer class set', () => {
+		const ram = makeRam();
+		expect(readTrainerClass(ram)).toBe(0);
+	});
+});
+
+describe('readEnemyPartyCount', () => {
+	it('reads enemy party count from RAM', () => {
+		const ram = makeRam({ [ADDR_ENEMY_PARTY_COUNT]: 4 });
+		expect(readEnemyPartyCount(ram)).toBe(4);
+	});
+
+	it('returns 0 when not set', () => {
+		const ram = makeRam();
+		expect(readEnemyPartyCount(ram)).toBe(0);
 	});
 });

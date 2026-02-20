@@ -72,6 +72,39 @@ export const ADDR_ENEMY_BATTLE_STATUS1 = 0xd067; // wEnemyBattleStatus1
 export const ADDR_ENEMY_BATTLE_STATUS2 = 0xd068; // wEnemyBattleStatus2
 export const ADDR_ENEMY_BATTLE_STATUS3 = 0xd069; // wEnemyBattleStatus3
 
+// Player active battle stats (Section 11, big-endian 16-bit)
+export const ADDR_PLAYER_ATTACK = 0xd025; // wPlayerAttack (2 bytes)
+export const ADDR_PLAYER_DEFENSE = 0xd027; // wPlayerDefense (2 bytes)
+export const ADDR_PLAYER_SPEED = 0xd029; // wPlayerSpeed (2 bytes)
+export const ADDR_PLAYER_SPECIAL = 0xd02b; // wPlayerSpecial (2 bytes)
+
+// Enemy active battle stats (Section 11, big-endian 16-bit)
+export const ADDR_ENEMY_ATTACK = 0xcff6; // wEnemyAttack (2 bytes)
+export const ADDR_ENEMY_DEFENSE = 0xcff8; // wEnemyDefense (2 bytes)
+export const ADDR_ENEMY_SPEED = 0xcffa; // wEnemySpeed (2 bytes)
+export const ADDR_ENEMY_SPECIAL = 0xcffc; // wEnemySpecial (2 bytes)
+
+// Enemy moves + PP
+export const ADDR_ENEMY_MOVES = 0xcfed; // wEnemyMoves (4 bytes, move IDs)
+export const ADDR_ENEMY_PP = 0xcffe; // wEnemyMovePP (4 bytes)
+
+// Current move being used this turn
+export const ADDR_PLAYER_MOVE_ID = 0xcfd2; // wPlayerMoveID
+export const ADDR_PLAYER_MOVE_EFFECT = 0xcfd3; // wPlayerMoveEffect
+export const ADDR_PLAYER_MOVE_POWER = 0xcfd4; // wPlayerMovePower
+export const ADDR_PLAYER_MOVE_TYPE = 0xcfd5; // wPlayerMoveType
+export const ADDR_PLAYER_MOVE_ACCURACY = 0xcfd6; // wPlayerMoveAccuracy
+export const ADDR_ENEMY_MOVE_ID = 0xcfcc; // wEnemyMoveID
+export const ADDR_ENEMY_MOVE_EFFECT = 0xcfcd; // wEnemyMoveEffect
+export const ADDR_ENEMY_MOVE_POWER = 0xcfce; // wEnemyMovePower
+export const ADDR_ENEMY_MOVE_TYPE = 0xcfcf; // wEnemyMoveType
+export const ADDR_ENEMY_MOVE_ACCURACY = 0xcfd0; // wEnemyMoveAccuracy
+
+// Enemy trainer data (Section 13)
+export const ADDR_TRAINER_CLASS = 0xd031; // wTrainerClass
+export const ADDR_CUR_OPPONENT = 0xd059; // wCurOpponent: >200 = trainer, else wild
+export const ADDR_ENEMY_PARTY_COUNT = 0xd89c; // wEnemyPartyCount
+
 // Misc battle state
 export const ADDR_BATTLE_TURN_COUNT = 0xccd5; // wBattleTurnCount
 export const ADDR_PLAYER_SUBSTITUTE_HP = 0xccd7; // wPlayerSubstituteHP
@@ -392,6 +425,72 @@ export function readBattleStatusFlags(
 	];
 }
 
+// ─── Battle Stats from RAM ───────────────────────────────────────────────────
+
+export type BattleStats = {
+	attack: number;
+	defense: number;
+	speed: number;
+	special: number;
+};
+
+/**
+ * Read player's active battle stats directly from RAM.
+ * 4 big-endian 16-bit values at 0xD025-0xD02C.
+ */
+export function extractPlayerBattleStats(ram: ReadonlyArray<number>): BattleStats {
+	return {
+		attack: readWord(ram, ADDR_PLAYER_ATTACK),
+		defense: readWord(ram, ADDR_PLAYER_DEFENSE),
+		speed: readWord(ram, ADDR_PLAYER_SPEED),
+		special: readWord(ram, ADDR_PLAYER_SPECIAL),
+	};
+}
+
+/**
+ * Read enemy's active battle stats directly from RAM.
+ * 4 big-endian 16-bit values at 0xCFF6-0xCFFD.
+ */
+export function extractEnemyBattleStats(ram: ReadonlyArray<number>): BattleStats {
+	return {
+		attack: readWord(ram, ADDR_ENEMY_ATTACK),
+		defense: readWord(ram, ADDR_ENEMY_DEFENSE),
+		speed: readWord(ram, ADDR_ENEMY_SPEED),
+		special: readWord(ram, ADDR_ENEMY_SPECIAL),
+	};
+}
+
+/**
+ * Read enemy's 4 move slots from RAM with move name/type/power lookup.
+ * Move IDs at 0xCFED-0xCFF0, PP at 0xCFFE-0xD001.
+ * Skips slots where move ID = 0 (empty).
+ */
+export function extractEnemyMoves(ram: ReadonlyArray<number>): Array<MoveData> {
+	return decodeMoves(ram, ADDR_ENEMY_MOVES, ADDR_ENEMY_PP);
+}
+
+/**
+ * Detect whether the current opponent is a trainer or wild Pokemon.
+ * wCurOpponent >= 200 = trainer battle, < 200 = wild encounter.
+ */
+export function isTrainerBattle(ram: ReadonlyArray<number>): boolean {
+	return (ram[ADDR_CUR_OPPONENT] ?? 0) >= 200;
+}
+
+/**
+ * Read the trainer class ID (0 if wild encounter).
+ */
+export function readTrainerClass(ram: ReadonlyArray<number>): number {
+	return ram[ADDR_TRAINER_CLASS] ?? 0;
+}
+
+/**
+ * Read the number of Pokemon in the enemy trainer's party.
+ */
+export function readEnemyPartyCount(ram: ReadonlyArray<number>): number {
+	return ram[ADDR_ENEMY_PARTY_COUNT] ?? 0;
+}
+
 export function decodeType(typeCode: number): PokemonType {
 	return TYPE_CODE_MAP.get(typeCode) ?? PokemonType.Normal;
 }
@@ -469,19 +568,19 @@ export function extractPlayerPokemon(ram: ReadonlyArray<number>): PokemonState {
 	const { condition } = decodeStatus(statusByte);
 	const level = ram[ADDR_PLAYER_LEVEL] || 1; // || instead of ?? to treat 0 as "unknown, default to 1"
 
-	// Stats estimated from level until full stat RAM extraction is implemented
-	const estimatedStat = Math.max(1, Math.floor(level * 1.5 + 20));
+	// Real battle stats from RAM (Gen 1 Special maps to both specialAttack and specialDefense)
+	const stats = extractPlayerBattleStats(ram);
 
 	return {
 		species: decodeSpecies(ram[ADDR_PLAYER_SPECIES] ?? 0),
 		level,
 		hp,
 		maxHp: maxHp > 0 ? maxHp : 1,
-		attack: estimatedStat,
-		defense: estimatedStat,
-		specialAttack: estimatedStat,
-		specialDefense: estimatedStat,
-		speed: estimatedStat,
+		attack: stats.attack || 1,
+		defense: stats.defense || 1,
+		specialAttack: stats.special || 1,
+		specialDefense: stats.special || 1,
+		speed: stats.speed || 1,
 		status: condition,
 		types: decodeTypes(ram[ADDR_PLAYER_TYPE1] ?? 0, ram[ADDR_PLAYER_TYPE2] ?? 0),
 		moves: decodeMoves(ram, ADDR_PLAYER_MOVES, ADDR_PLAYER_PP),
@@ -528,6 +627,7 @@ export function extractOpponentPokemon(ram: ReadonlyArray<number>): OpponentStat
 	const rawPercent = enemyMaxHp > 0 ? (enemyHp / enemyMaxHp) * 100 : 0;
 	const hpPercent = Math.min(Math.max(rawPercent, 0), 100);
 	const { condition } = decodeStatus(ram[ADDR_ENEMY_STATUS] ?? 0);
+	const stats = extractEnemyBattleStats(ram);
 
 	return {
 		species: decodeSpecies(ram[ADDR_ENEMY_SPECIES] ?? 0),
@@ -537,6 +637,12 @@ export function extractOpponentPokemon(ram: ReadonlyArray<number>): OpponentStat
 		status: condition,
 		types: decodeTypes(ram[ADDR_ENEMY_TYPE1] ?? 0, ram[ADDR_ENEMY_TYPE2] ?? 0),
 		level: ram[ADDR_ENEMY_LEVEL] || 1, // || instead of ?? to treat 0 as "unknown, default to 1"
+		attack: stats.attack || 1,
+		defense: stats.defense || 1,
+		specialAttack: stats.special || 1,
+		specialDefense: stats.special || 1,
+		speed: stats.speed || 1,
+		moves: extractEnemyMoves(ram),
 	};
 }
 

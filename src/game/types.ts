@@ -110,6 +110,12 @@ export type OpponentState = {
 	status: StatusCondition;
 	types: Array<PokemonType>;
 	level: number;
+	attack: number;
+	defense: number;
+	specialAttack: number;
+	specialDefense: number;
+	speed: number;
+	moves: Array<MoveData>;
 };
 
 export const opponentStateSchema = z.object({
@@ -120,6 +126,12 @@ export const opponentStateSchema = z.object({
 	status: statusConditionSchema,
 	types: z.array(pokemonTypeSchema).min(1).max(2),
 	level: z.number().int().min(1).max(100),
+	attack: z.number().int().min(1),
+	defense: z.number().int().min(1),
+	specialAttack: z.number().int().min(1),
+	specialDefense: z.number().int().min(1),
+	speed: z.number().int().min(1),
+	moves: z.array(moveDataSchema).min(0).max(4),
 });
 
 // ─── Battle Phase ─────────────────────────────────────────────────────────────

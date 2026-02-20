@@ -154,6 +154,50 @@ export class MgbaEmulator implements GameBoyEmulator {
 			0xd067,
 			0xd068,
 			0xd069,
+			// Player active battle stats (8 bytes, big-endian 16-bit pairs)
+			0xd025,
+			0xd026, // wPlayerAttack
+			0xd027,
+			0xd028, // wPlayerDefense
+			0xd029,
+			0xd02a, // wPlayerSpeed
+			0xd02b,
+			0xd02c, // wPlayerSpecial
+			// Enemy active battle stats (8 bytes)
+			0xcff6,
+			0xcff7, // wEnemyAttack
+			0xcff8,
+			0xcff9, // wEnemyDefense
+			0xcffa,
+			0xcffb, // wEnemySpeed
+			0xcffc,
+			0xcffd, // wEnemySpecial
+			// Enemy moves (4 move IDs)
+			0xcfed,
+			0xcfee,
+			0xcfef,
+			0xcff0,
+			// Enemy PP (4 bytes)
+			0xcffe,
+			0xcfff,
+			0xd000,
+			0xd001,
+			// Current move data (player)
+			0xcfd2, // wPlayerMoveID
+			0xcfd3, // wPlayerMoveEffect
+			0xcfd4, // wPlayerMovePower
+			0xcfd5, // wPlayerMoveType
+			0xcfd6, // wPlayerMoveAccuracy
+			// Current move data (enemy)
+			0xcfcc, // wEnemyMoveID
+			0xcfcd, // wEnemyMoveEffect
+			0xcfce, // wEnemyMovePower
+			0xcfcf, // wEnemyMoveType
+			0xcfd0, // wEnemyMoveAccuracy
+			// Trainer data
+			0xd031, // wTrainerClass
+			0xd059, // wCurOpponent
+			0xd89c, // wEnemyPartyCount
 			// Misc battle state
 			0xccd5, // wBattleTurnCount
 			0xccd7, // wPlayerSubstituteHP
