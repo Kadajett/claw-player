@@ -14,7 +14,7 @@ import { createLogger } from '../logger.js';
 import { createRedisClient, createRedisSubscriber } from '../redis/client.js';
 import { RegisterRequestSchema, VoteRequestSchema } from '../types/api.js';
 import { assertRelayServerConfig, loadRelayConfig } from './config.js';
-import type { BattleState, HomeClientMessage, RelayMessage, VoteBufferEntry } from './types.js';
+import type { GameState, HomeClientMessage, RelayMessage, VoteBufferEntry } from './types.js';
 import { HomeClientMessageSchema } from './types.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -75,7 +75,9 @@ export class RelayServer {
 	private homeWs: WebSocket<HomeWsData> | null = null;
 	private homeConnectedAt: number | null = null;
 	private lastHomeHeartbeatAt: number | null = null;
-	private cachedState: BattleState | null = null;
+	private cachedState: GameState | null = null;
+	private cachedTickId: number | null = null;
+	private cachedGameId: string | null = null;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(relaySecret: string, port: number, logger: Logger, redis: Redis, redisSub: Redis) {
@@ -192,11 +194,11 @@ export class RelayServer {
 		this.lastHomeHeartbeatAt = Date.now();
 		this.logger.info('Home client authenticated and connected');
 
-		if (this.cachedState) {
+		if (this.cachedState && this.cachedTickId !== null && this.cachedGameId !== null) {
 			const stateMsg: RelayMessage = {
 				type: 'state_update',
-				tickId: this.cachedState.turn,
-				gameId: this.cachedState.gameId,
+				tickId: this.cachedTickId,
+				gameId: this.cachedGameId,
 				state: this.cachedState,
 			};
 			ws.send(JSON.stringify(stateMsg));
@@ -212,8 +214,10 @@ export class RelayServer {
 
 		if (msg.type === 'state_push') {
 			this.cachedState = msg.state;
+			this.cachedTickId = msg.tickId;
+			this.cachedGameId = msg.gameId;
 			this.logger.info(
-				{ tickId: msg.tickId, gameId: msg.gameId, turn: msg.state.turn },
+				{ tickId: msg.tickId, gameId: msg.gameId, mode: msg.state.mode },
 				'State received from home client',
 			);
 			this.broadcastToAgents({
@@ -270,7 +274,7 @@ export class RelayServer {
 						status: 'ok',
 						time: Date.now(),
 						homeConnected: this.isHomeConnected(),
-						cachedStateTick: this.cachedState?.turn ?? null,
+						cachedStateTick: this.cachedTickId ?? null,
 						bufferedVotes,
 					});
 				})
@@ -281,7 +285,7 @@ export class RelayServer {
 							status: 'ok',
 							time: Date.now(),
 							homeConnected: this.isHomeConnected(),
-							cachedStateTick: this.cachedState?.turn ?? null,
+							cachedStateTick: this.cachedTickId ?? null,
 							bufferedVotes: -1,
 						});
 				});
@@ -364,11 +368,11 @@ export class RelayServer {
 			open: (ws) => {
 				this.logger.debug('Agent WebSocket connected');
 
-				if (this.cachedState) {
+				if (this.cachedState && this.cachedTickId !== null && this.cachedGameId !== null) {
 					const stateMsg: RelayMessage = {
 						type: 'state_update',
-						tickId: this.cachedState.turn,
-						gameId: this.cachedState.gameId,
+						tickId: this.cachedTickId,
+						gameId: this.cachedGameId,
 						state: this.cachedState,
 					};
 					ws.send(JSON.stringify(stateMsg));
@@ -436,8 +440,12 @@ export class RelayServer {
 		return this.app;
 	}
 
-	getCachedState(): BattleState | null {
+	getCachedState(): GameState | null {
 		return this.cachedState;
+	}
+
+	getCachedTickId(): number | null {
+		return this.cachedTickId;
 	}
 
 	async getBufferedVoteCount(gameId = 'default'): Promise<number> {
@@ -629,8 +637,7 @@ export async function startRelayServer(): Promise<RelayServer> {
 					timestamp: Date.now(),
 				});
 
-				const cached = server.getCachedState();
-				const currentTick = cached?.turn ?? 0;
+				const currentTick = server.getCachedTickId() ?? 0;
 
 				logger.debug(
 					{ agentId: auth.agent.agentId, action: voteResult.action, tick: currentTick },

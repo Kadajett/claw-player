@@ -70,7 +70,7 @@ const validBattleState = {
 	playerActive: validPokemonState,
 	playerParty: [],
 	opponent: validOpponentState,
-	availableActions: ['move:0', 'move:1'],
+	availableActions: ['a', 'b'],
 	weather: 'none',
 	turnHistory: [],
 	lastAction: null,
@@ -78,15 +78,33 @@ const validBattleState = {
 	updatedAt: 1_000_100,
 };
 
+const validGameState = {
+	mode: 'battle' as const,
+	battle: validBattleState,
+};
+
 describe('RelayVoteBatchSchema', () => {
-	it('parses a valid vote batch', () => {
+	it('parses a valid vote batch with GameAction', () => {
 		const result = RelayVoteBatchSchema.safeParse({
 			type: 'vote_batch',
 			tickId: 3,
 			gameId: 'game-1',
-			votes: [{ agentId: 'agent-1', action: 'move:0', timestamp: 1_700_000_000 }],
+			votes: [{ agentId: 'agent-1', action: 'a', timestamp: 1_700_000_000 }],
 		});
 		expect(result.success).toBe(true);
+	});
+
+	it('accepts all valid GameAction values', () => {
+		const actions = ['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'];
+		for (const action of actions) {
+			const result = RelayVoteBatchSchema.safeParse({
+				type: 'vote_batch',
+				tickId: 3,
+				gameId: 'game-1',
+				votes: [{ agentId: 'agent-1', action, timestamp: 1_700_000_000 }],
+			});
+			expect(result.success).toBe(true);
+		}
 	});
 
 	it('rejects missing votes array', () => {
@@ -107,17 +125,40 @@ describe('RelayVoteBatchSchema', () => {
 		});
 		expect(result.success).toBe(false);
 	});
+
+	it('rejects old-format BattleAction values', () => {
+		const oldActions = ['move:0', 'move:1', 'move:2', 'move:3', 'switch:0', 'switch:5', 'run'];
+		for (const action of oldActions) {
+			const result = RelayVoteBatchSchema.safeParse({
+				type: 'vote_batch',
+				tickId: 3,
+				gameId: 'game-1',
+				votes: [{ agentId: 'agent-1', action, timestamp: 1_700_000_000 }],
+			});
+			expect(result.success).toBe(false);
+		}
+	});
 });
 
 describe('RelayStateUpdateSchema', () => {
-	it('parses a valid state update', () => {
+	it('parses a valid state update with battle mode', () => {
+		const result = RelayStateUpdateSchema.safeParse({
+			type: 'state_update',
+			tickId: 5,
+			gameId: 'game-1',
+			state: validGameState,
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it('rejects raw BattleState without mode wrapper', () => {
 		const result = RelayStateUpdateSchema.safeParse({
 			type: 'state_update',
 			tickId: 5,
 			gameId: 'game-1',
 			state: validBattleState,
 		});
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 	});
 
 	it('rejects missing state', () => {
@@ -189,14 +230,24 @@ describe('HomeVotesRequestSchema', () => {
 });
 
 describe('HomeStatePushSchema', () => {
-	it('parses a valid state_push', () => {
+	it('parses a valid state_push with battle mode', () => {
+		const result = HomeStatePushSchema.safeParse({
+			type: 'state_push',
+			tickId: 5,
+			gameId: 'game-1',
+			state: validGameState,
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it('rejects raw BattleState without mode wrapper', () => {
 		const result = HomeStatePushSchema.safeParse({
 			type: 'state_push',
 			tickId: 5,
 			gameId: 'game-1',
 			state: validBattleState,
 		});
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 	});
 
 	it('rejects missing state', () => {
@@ -223,7 +274,7 @@ describe('HomeClientMessageSchema discriminated union', () => {
 			type: 'state_push',
 			tickId: 1,
 			gameId: 'g',
-			state: validBattleState,
+			state: validGameState,
 		});
 		expect(result.success).toBe(true);
 	});

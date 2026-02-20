@@ -145,7 +145,8 @@ if (config.RELAY_MODE === 'client') {
 		async () => {
 			const rawState = await redis.get(`game:state:${GAME_ID}`);
 			if (!rawState) return null;
-			return JSON.parse(rawState) as import('./game/types.js').BattleState;
+			const battle = JSON.parse(rawState) as import('./game/types.js').BattleState;
+			return { mode: 'battle' as const, battle };
 		},
 	);
 
@@ -154,7 +155,7 @@ if (config.RELAY_MODE === 'client') {
 
 	// Push state to relay after each tick
 	tickProcessor.onTick(async (state) => {
-		await homeClient.pushState(state.turn, state.gameId, state);
+		await homeClient.pushState(state.turn, state.gameId, { mode: 'battle', battle: state });
 	});
 }
 

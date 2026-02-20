@@ -91,22 +91,22 @@ describe('RelayServer', () => {
 	describe('bufferVote', () => {
 		it('stores vote via Redis HSET', async () => {
 			const server = new RelayServer('secret1234567890', 4000, logger, redis, redisSub);
-			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'move:0', timestamp: Date.now() });
+			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'a', timestamp: Date.now() });
 			expect(redis.hset).toHaveBeenCalledOnce();
 		});
 
 		it('overwrites previous vote for same agent (one vote per agent per tick)', async () => {
 			const server = new RelayServer('secret1234567890', 4000, logger, redis, redisSub);
-			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'move:0', timestamp: Date.now() });
-			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'move:1', timestamp: Date.now() });
+			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'a', timestamp: Date.now() });
+			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'b', timestamp: Date.now() });
 			// HSET with same key overwrites, so both calls use same agentId field
 			expect(redis.hset).toHaveBeenCalledTimes(2);
 		});
 
 		it('accepts votes from multiple agents', async () => {
 			const server = new RelayServer('secret1234567890', 4000, logger, redis, redisSub);
-			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'move:0', timestamp: Date.now() });
-			await server.bufferVote('agent-2', { agentId: 'agent-2', action: 'move:1', timestamp: Date.now() });
+			await server.bufferVote('agent-1', { agentId: 'agent-1', action: 'a', timestamp: Date.now() });
+			await server.bufferVote('agent-2', { agentId: 'agent-2', action: 'up', timestamp: Date.now() });
 			expect(redis.hset).toHaveBeenCalledTimes(2);
 		});
 	});
@@ -126,8 +126,8 @@ describe('RelayServer', () => {
 		it('buffers multiple distinct agents', async () => {
 			const server = new RelayServer('secret1234567890', 4000, logger, redis, redisSub);
 			const ts = Date.now();
-			await server.bufferVote('agent-42', { agentId: 'agent-42', action: 'run', timestamp: ts });
-			await server.bufferVote('agent-99', { agentId: 'agent-99', action: 'switch:0', timestamp: ts });
+			await server.bufferVote('agent-42', { agentId: 'agent-42', action: 'start', timestamp: ts });
+			await server.bufferVote('agent-99', { agentId: 'agent-99', action: 'select', timestamp: ts });
 			expect(redis.hset).toHaveBeenCalledTimes(2);
 		});
 	});
@@ -138,14 +138,17 @@ describe('RelayServer', () => {
 		await expect(server.getBufferedVoteCount()).resolves.toBe(0);
 	});
 
-	it('bufferVote accepts all valid action types', async () => {
+	it('bufferVote accepts all valid GameAction types', async () => {
 		const server = new RelayServer('secret1234567890', 4000, logger, redis, redisSub);
-		await server.bufferVote('a1', { agentId: 'a1', action: 'move:0', timestamp: 1_700_000_000 });
-		await server.bufferVote('a2', { agentId: 'a2', action: 'move:3', timestamp: 1_700_000_000 });
-		await server.bufferVote('a3', { agentId: 'a3', action: 'switch:0', timestamp: 1_700_000_000 });
-		await server.bufferVote('a4', { agentId: 'a4', action: 'switch:5', timestamp: 1_700_000_000 });
-		await server.bufferVote('a5', { agentId: 'a5', action: 'run', timestamp: 1_700_000_000 });
-		expect(redis.hset).toHaveBeenCalledTimes(5);
+		await server.bufferVote('a1', { agentId: 'a1', action: 'up', timestamp: 1_700_000_000 });
+		await server.bufferVote('a2', { agentId: 'a2', action: 'down', timestamp: 1_700_000_000 });
+		await server.bufferVote('a3', { agentId: 'a3', action: 'left', timestamp: 1_700_000_000 });
+		await server.bufferVote('a4', { agentId: 'a4', action: 'right', timestamp: 1_700_000_000 });
+		await server.bufferVote('a5', { agentId: 'a5', action: 'a', timestamp: 1_700_000_000 });
+		await server.bufferVote('a6', { agentId: 'a6', action: 'b', timestamp: 1_700_000_000 });
+		await server.bufferVote('a7', { agentId: 'a7', action: 'start', timestamp: 1_700_000_000 });
+		await server.bufferVote('a8', { agentId: 'a8', action: 'select', timestamp: 1_700_000_000 });
+		expect(redis.hset).toHaveBeenCalledTimes(8);
 	});
 
 	describe('listen and close', () => {

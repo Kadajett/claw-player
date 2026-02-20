@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 
-import type { BattleState } from '../game/types.js';
+import type { GameState } from '../game/types.js';
 import { createLogger } from '../logger.js';
 import { assertRelayClientConfig, loadRelayConfig } from './config.js';
 import type { HomeClientMessage, RelayMessage, RelayVoteBatch } from './types.js';
@@ -15,7 +15,7 @@ const RECONNECT_JITTER_MS = 500;
 const WS_OPEN = 1;
 
 export type VoteBatchHandler = (batch: RelayVoteBatch) => Promise<void> | void;
-export type StateProvider = () => Promise<BattleState | null> | BattleState | null;
+export type StateProvider = () => Promise<GameState | null> | GameState | null;
 
 export type HomeClientOptions = {
 	relayUrl: string;
@@ -89,7 +89,7 @@ export class HomeClient {
 		return this.ws !== null && this.ws.readyState === WS_OPEN;
 	}
 
-	async pushState(tickId: number, gameId: string, state: BattleState): Promise<void> {
+	async pushState(tickId: number, gameId: string, state: GameState): Promise<void> {
 		if (!this.isConnected()) {
 			this.logger.warn({ tickId, gameId }, 'Cannot push state: not connected to relay');
 			return;
@@ -101,7 +101,7 @@ export class HomeClient {
 			state,
 		};
 		this.sendMessage(msg);
-		this.logger.info({ tickId, gameId, turn: state.turn }, 'State pushed to relay');
+		this.logger.info({ tickId, gameId, mode: state.mode }, 'State pushed to relay');
 	}
 
 	private connect(): void {
