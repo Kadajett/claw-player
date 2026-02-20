@@ -97,6 +97,7 @@ const gameStateService: LiveGameStateService = createGameStateService({
 	logger: logger.child({ module: 'game-state-service' }),
 	gameId: GAME_ID,
 	tickIntervalMs: config.TICK_INTERVAL_MS,
+	emulator,
 });
 
 // Initialize game state if emulator is ready and in a battle

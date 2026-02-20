@@ -349,7 +349,9 @@ export type GetHistoryOutput = z.infer<typeof GetHistoryOutput>;
 
 // Service interface implemented by the game engine module
 export interface GameStateService {
+	/** @deprecated Use getGameState() instead. */
 	getBattleState(agentId: string): Promise<GetBattleStateOutput>;
+	getGameState(agentId: string): Promise<GetGameStateOutput>;
 	submitAction(agentId: string, action: string): Promise<SubmitActionOutput>;
 	getRateLimit(agentId: string): Promise<GetRateLimitOutput>;
 	getHistory(agentId: string, limit: number, includeLeaderboard: boolean): Promise<GetHistoryOutput>;
