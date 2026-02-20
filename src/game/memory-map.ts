@@ -25,6 +25,40 @@ import {
 export const ADDR_BATTLE_TYPE = 0xd057; // 0=no battle, 1=wild, 2=trainer
 export const ADDR_IN_BATTLE = 0xd058; // non-zero when in battle
 
+// Player stat modifiers (Section 12, 7 = neutral, 1 = -6 stages, 13 = +6 stages)
+export const ADDR_PLAYER_ATTACK_MOD = 0xcd1a; // wPlayerAttackMod
+export const ADDR_PLAYER_DEFENSE_MOD = 0xcd1b; // wPlayerDefenseMod
+export const ADDR_PLAYER_SPEED_MOD = 0xcd1c; // wPlayerSpeedMod
+export const ADDR_PLAYER_SPECIAL_MOD = 0xcd1d; // wPlayerSpecialMod
+export const ADDR_PLAYER_ACCURACY_MOD = 0xcd1e; // wPlayerAccuracyMod
+export const ADDR_PLAYER_EVASION_MOD = 0xcd1f; // wPlayerEvasionMod
+
+// Enemy stat modifiers (Section 12, same layout as player)
+export const ADDR_ENEMY_ATTACK_MOD = 0xcd2e; // wEnemyAttackMod
+export const ADDR_ENEMY_DEFENSE_MOD = 0xcd2f; // wEnemyDefenseMod
+export const ADDR_ENEMY_SPEED_MOD = 0xcd30; // wEnemySpeedMod
+export const ADDR_ENEMY_SPECIAL_MOD = 0xcd31; // wEnemySpecialMod
+export const ADDR_ENEMY_ACCURACY_MOD = 0xcd32; // wEnemyAccuracyMod
+export const ADDR_ENEMY_EVASION_MOD = 0xcd33; // wEnemyEvasionMod
+
+// Player battle status bitfields (Section 12)
+export const ADDR_PLAYER_BATTLE_STATUS1 = 0xd062; // wPlayerBattleStatus1
+export const ADDR_PLAYER_BATTLE_STATUS2 = 0xd063; // wPlayerBattleStatus2
+export const ADDR_PLAYER_BATTLE_STATUS3 = 0xd064; // wPlayerBattleStatus3
+
+// Enemy battle status bitfields (Section 12, same bit layout as player)
+export const ADDR_ENEMY_BATTLE_STATUS1 = 0xd067; // wEnemyBattleStatus1
+export const ADDR_ENEMY_BATTLE_STATUS2 = 0xd068; // wEnemyBattleStatus2
+export const ADDR_ENEMY_BATTLE_STATUS3 = 0xd069; // wEnemyBattleStatus3
+
+// Misc battle state
+export const ADDR_BATTLE_TURN_COUNT = 0xccd5; // wBattleTurnCount
+export const ADDR_PLAYER_SUBSTITUTE_HP = 0xccd7; // wPlayerSubstituteHP
+export const ADDR_ENEMY_SUBSTITUTE_HP = 0xccd8; // wEnemySubstituteHP
+export const ADDR_CRITICAL_OHKO_FLAG = 0xd05e; // wCriticalOHKOFlag
+export const ADDR_PLAYER_CONFUSION_COUNTER = 0xd06b; // wPlayerConfusionCounter
+export const ADDR_PLAYER_TOXIC_COUNTER = 0xd06c; // wPlayerToxicCounter
+
 // Player's active Pokemon (wBattleMon @ 0xD014, from pret/pokered battle_struct)
 export const ADDR_PLAYER_SPECIES = 0xd014; // wBattleMonSpecies
 export const ADDR_PLAYER_HP_HIGH = 0xd015; // wBattleMonHP (2 bytes, big-endian)
@@ -257,6 +291,84 @@ export function decodeStatus(statusByte: number): { condition: StatusCondition; 
 		return { condition: StatusCondition.Poison, sleepTurns: 0 };
 	}
 	return { condition: StatusCondition.None, sleepTurns: 0 };
+}
+
+// ─── Stat Modifiers ──────────────────────────────────────────────────────────
+
+export type StatModifiers = {
+	attack: number; // 1-13, 7 = neutral
+	defense: number;
+	speed: number;
+	special: number;
+	accuracy: number;
+	evasion: number;
+};
+
+/**
+ * Read 6 consecutive stat modifier bytes starting at baseAddr.
+ * Values: 1 = -6 stages, 7 = neutral, 13 = +6 stages.
+ */
+export function readStatModifiers(ram: ReadonlyArray<number>, baseAddr: number): StatModifiers {
+	return {
+		attack: ram[baseAddr] ?? 7,
+		defense: ram[baseAddr + 1] ?? 7,
+		speed: ram[baseAddr + 2] ?? 7,
+		special: ram[baseAddr + 3] ?? 7,
+		accuracy: ram[baseAddr + 4] ?? 7,
+		evasion: ram[baseAddr + 5] ?? 7,
+	};
+}
+
+// ─── Battle Status Flags ─────────────────────────────────────────────────────
+
+// Battle status bitfield definitions: [bitmask, flag_name] pairs per byte
+const BATTLE_STATUS1_FLAGS: ReadonlyArray<readonly [number, string]> = [
+	[0x01, 'bide'], // Bit 0: Bide storing energy
+	[0x02, 'thrash'], // Bit 1: Thrashing about
+	[0x04, 'charging'], // Bit 2: Charging up (SolarBeam, etc.)
+	[0x08, 'multi_turn'], // Bit 3: Multi-turn move (Wrap, Bind, etc.)
+	[0x10, 'flinch'], // Bit 4: Flinched
+	[0x20, 'locked'], // Bit 5: Locked on (multi-turn attack)
+	[0x40, 'invulnerable'], // Bit 6: Invulnerable (Fly, Dig)
+];
+
+const BATTLE_STATUS2_FLAGS: ReadonlyArray<readonly [number, string]> = [
+	[0x01, 'x_accuracy'], // Bit 0: X Accuracy effect active
+	[0x02, 'mist'], // Bit 1: Protected by Mist
+	[0x04, 'focus_energy'], // Bit 2: Focus Energy active
+	[0x08, 'substitute'], // Bit 3: Substitute active
+];
+
+const BATTLE_STATUS3_FLAGS: ReadonlyArray<readonly [number, string]> = [
+	[0x01, 'confused'], // Bit 0: Confused
+	[0x10, 'light_screen'], // Bit 4: Light Screen active
+	[0x20, 'reflect'], // Bit 5: Reflect active
+	[0x80, 'transformed'], // Bit 7: Transformed (used Transform)
+];
+
+function decodeBitfield(byte: number, definitions: ReadonlyArray<readonly [number, string]>): Array<string> {
+	const flags: Array<string> = [];
+	for (const [mask, name] of definitions) {
+		if (byte & mask) flags.push(name);
+	}
+	return flags;
+}
+
+/**
+ * Decode 3 battle status bitfield bytes into human-readable flag names.
+ * Returns an array like ["confused", "substitute"] or [] if no flags set.
+ */
+export function readBattleStatusFlags(
+	ram: ReadonlyArray<number>,
+	addr1: number,
+	addr2: number,
+	addr3: number,
+): Array<string> {
+	return [
+		...decodeBitfield(ram[addr1] ?? 0, BATTLE_STATUS1_FLAGS),
+		...decodeBitfield(ram[addr2] ?? 0, BATTLE_STATUS2_FLAGS),
+		...decodeBitfield(ram[addr3] ?? 0, BATTLE_STATUS3_FLAGS),
+	];
 }
 
 export function decodeType(typeCode: number): PokemonType {

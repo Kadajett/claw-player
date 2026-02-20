@@ -132,6 +132,35 @@ export class MgbaEmulator implements GameBoyEmulator {
 			0xcff3, // level
 			0xcff4,
 			0xcff5, // maxHP high/low
+			// Battle stat modifiers (player: 6 bytes)
+			0xcd1a,
+			0xcd1b,
+			0xcd1c,
+			0xcd1d,
+			0xcd1e,
+			0xcd1f,
+			// Battle stat modifiers (enemy: 6 bytes)
+			0xcd2e,
+			0xcd2f,
+			0xcd30,
+			0xcd31,
+			0xcd32,
+			0xcd33,
+			// Battle status bitfields (player: 3 bytes)
+			0xd062,
+			0xd063,
+			0xd064,
+			// Battle status bitfields (enemy: 3 bytes)
+			0xd067,
+			0xd068,
+			0xd069,
+			// Misc battle state
+			0xccd5, // wBattleTurnCount
+			0xccd7, // wPlayerSubstituteHP
+			0xccd8, // wEnemySubstituteHP
+			0xd05e, // wCriticalOHKOFlag
+			0xd06b, // wPlayerConfusionCounter
+			0xd06c, // wPlayerToxicCounter
 			// Overworld state
 			0xd361,
 			0xd362,
