@@ -248,3 +248,148 @@ export const SNAPSHOT_INTERVAL = 10 as const;
 export const VOTE_KEY_EXPIRY_SECONDS = 3600 as const;
 export const DEFAULT_TICK_INTERVAL_MS = 15_000 as const;
 export const DEFAULT_FALLBACK_ACTION: BattleAction = 'move:0';
+
+// ─── Game Phase ───────────────────────────────────────────────────────────────
+
+export enum GamePhase {
+	Overworld = 'overworld',
+	Battle = 'battle',
+	Menu = 'menu',
+	Dialogue = 'dialogue',
+	Cutscene = 'cutscene',
+}
+
+export const gamePhaseSchema = z.nativeEnum(GamePhase);
+
+// ─── Overworld Action ─────────────────────────────────────────────────────────
+
+export type OverworldAction = 'up' | 'down' | 'left' | 'right' | 'a_button' | 'b_button' | 'start' | 'select';
+
+export const overworldActionSchema = z.enum(['up', 'down', 'left', 'right', 'a_button', 'b_button', 'start', 'select']);
+
+// ─── Direction ────────────────────────────────────────────────────────────────
+
+export type Direction = 'up' | 'down' | 'left' | 'right';
+
+export const directionSchema = z.enum(['up', 'down', 'left', 'right']);
+
+// ─── Map Location ─────────────────────────────────────────────────────────────
+
+export type MapLocation = {
+	mapId: number;
+	mapName: string;
+	x: number;
+	y: number;
+};
+
+export const mapLocationSchema = z.object({
+	mapId: z.number().int().min(0),
+	mapName: z.string(),
+	x: z.number().int().min(0),
+	y: z.number().int().min(0),
+});
+
+// ─── NPC Info ─────────────────────────────────────────────────────────────────
+
+export type NpcInfo = {
+	id: number;
+	name: string;
+	x: number;
+	y: number;
+	canTalk: boolean;
+};
+
+export const npcInfoSchema = z.object({
+	id: z.number().int().min(0),
+	name: z.string(),
+	x: z.number().int().min(0),
+	y: z.number().int().min(0),
+	canTalk: z.boolean(),
+});
+
+// ─── Item Info ────────────────────────────────────────────────────────────────
+
+export type ItemInfo = {
+	id: number;
+	name: string;
+	x: number;
+	y: number;
+};
+
+export const itemInfoSchema = z.object({
+	id: z.number().int().min(0),
+	name: z.string(),
+	x: z.number().int().min(0),
+	y: z.number().int().min(0),
+});
+
+// ─── Inventory Item ───────────────────────────────────────────────────────────
+
+export type InventoryItem = {
+	itemId: number;
+	name: string;
+	quantity: number;
+};
+
+export const inventoryItemSchema = z.object({
+	itemId: z.number().int().min(0),
+	name: z.string(),
+	quantity: z.number().int().min(0),
+});
+
+// ─── Player Info ──────────────────────────────────────────────────────────────
+
+export type PlayerInfo = {
+	name: string;
+	money: number;
+	badges: number;
+	inventory: Array<InventoryItem>;
+	party: Array<PokemonState>;
+};
+
+export const playerInfoSchema = z.object({
+	name: z.string(),
+	money: z.number().int().min(0),
+	badges: z.number().int().min(0).max(8),
+	inventory: z.array(inventoryItemSchema),
+	party: z.array(pokemonStateSchema).max(6),
+});
+
+// ─── Overworld State ──────────────────────────────────────────────────────────
+
+export type OverworldState = {
+	gamePhase: GamePhase;
+	location: MapLocation;
+	playerDirection: Direction;
+	inBuilding: boolean;
+	canMove: boolean;
+	nearbyNpcs: Array<NpcInfo>;
+	nearbyItems: Array<ItemInfo>;
+	player: PlayerInfo;
+	menuOpen: string | null;
+	dialogueText: string | null;
+	secondsRemaining: number;
+};
+
+export const overworldStateSchema = z.object({
+	gamePhase: gamePhaseSchema,
+	location: mapLocationSchema,
+	playerDirection: directionSchema,
+	inBuilding: z.boolean(),
+	canMove: z.boolean(),
+	nearbyNpcs: z.array(npcInfoSchema),
+	nearbyItems: z.array(itemInfoSchema),
+	player: playerInfoSchema,
+	menuOpen: z.string().nullable(),
+	dialogueText: z.string().nullable(),
+	secondsRemaining: z.number().min(0),
+});
+
+// ─── Game State (discriminated union) ────────────────────────────────────────
+
+export type GameState = { mode: 'battle'; battle: BattleState } | { mode: 'overworld'; overworld: OverworldState };
+
+export const gameStateSchema = z.discriminatedUnion('mode', [
+	z.object({ mode: z.literal('battle'), battle: battleStateSchema }),
+	z.object({ mode: z.literal('overworld'), overworld: overworldStateSchema }),
+]);
