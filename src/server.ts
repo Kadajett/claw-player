@@ -110,7 +110,7 @@ if (emulator.isInitialized) {
 			await tickProcessor.start(GAME_ID);
 			logger.info({ gameId: GAME_ID, tickIntervalMs: config.TICK_INTERVAL_MS }, 'Game engine started (in battle)');
 		} catch (err) {
-			logger.warn({ err }, 'Could not initialize tick processor for current battle. MCP press_button still works.');
+			logger.warn({ err }, 'Could not initialize tick processor for current battle. MCP submit_action still works.');
 		}
 	} else {
 		logger.info('Emulator loaded but not in battle. Tick processor will start when a battle begins.');
@@ -124,7 +124,6 @@ if (emulator.isInitialized) {
 const mcpServer = createMcpHttpServer({
 	redis,
 	gameStateService,
-	emulator,
 	port: config.MCP_PORT,
 	host: config.HOST,
 });
