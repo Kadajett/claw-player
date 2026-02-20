@@ -14,10 +14,8 @@ import type { GameBoyEmulator } from './game/emulator-interface.js';
 import { Emulator } from './game/emulator.js';
 import { createGameStateService } from './game/game-state-service.js';
 import type { LiveGameStateService } from './game/game-state-service.js';
-import { extractBattleState } from './game/memory-map.js';
 import { MgbaEmulator } from './game/mgba-emulator.js';
-import { StateManager } from './game/state.js';
-import { TickProcessor } from './game/tick-processor.js';
+import { UnifiedTickProcessor } from './game/unified-tick-processor.js';
 import { VoteAggregator } from './game/vote-aggregator.js';
 import { createMcpHttpServer } from './mcp/server.js';
 import { createRedisClient } from './redis/client.js';
@@ -80,19 +78,23 @@ if (useRealEmulator) {
 // ─── Game Engine ────────────────────────────────────────────────────────────
 
 const GAME_ID = 'default';
-const stateManager = new StateManager(redis, logger.child({ module: 'state-manager' }));
 const voteAggregator = new VoteAggregator(redis, logger.child({ module: 'vote-aggregator' }));
-const tickProcessor = new TickProcessor(stateManager, voteAggregator, logger.child({ module: 'tick-processor' }), {
-	tickIntervalMs: config.TICK_INTERVAL_MS,
-	useRealEmulator,
-	emulator: useRealEmulator ? emulator : undefined,
-});
+const unifiedProcessor = new UnifiedTickProcessor(
+	emulator,
+	voteAggregator,
+	redis,
+	logger.child({ module: 'unified-tick-processor' }),
+	{
+		tickIntervalMs: config.TICK_INTERVAL_MS,
+		emulatorSettleMs: 500,
+		gameId: GAME_ID,
+	},
+);
 
 // ─── Game State Service (MCP bridge) ────────────────────────────────────────
 
 const gameStateService: LiveGameStateService = createGameStateService({
 	redis,
-	stateManager,
 	voteAggregator,
 	logger: logger.child({ module: 'game-state-service' }),
 	gameId: GAME_ID,
@@ -100,21 +102,13 @@ const gameStateService: LiveGameStateService = createGameStateService({
 	emulator,
 });
 
-// Initialize game state if emulator is ready and in a battle
+// Start unified tick processor if emulator is ready
 if (emulator.isInitialized) {
-	const ram = await emulator.getRAM();
-	const battleFlag = ram[0xd058] ?? 0; // ADDR_IN_BATTLE
-	if (battleFlag !== 0) {
-		try {
-			const initialState = extractBattleState(Array.from(ram), GAME_ID, 0);
-			await stateManager.saveState(initialState);
-			await tickProcessor.start(GAME_ID);
-			logger.info({ gameId: GAME_ID, tickIntervalMs: config.TICK_INTERVAL_MS }, 'Game engine started (in battle)');
-		} catch (err) {
-			logger.warn({ err }, 'Could not initialize tick processor for current battle. MCP submit_action still works.');
-		}
-	} else {
-		logger.info('Emulator loaded but not in battle. Tick processor will start when a battle begins.');
+	try {
+		unifiedProcessor.start();
+		logger.info({ gameId: GAME_ID, tickIntervalMs: config.TICK_INTERVAL_MS }, 'Unified tick processor started');
+	} catch (err) {
+		logger.warn({ err }, 'Could not start unified tick processor. MCP submit_action still works.');
 	}
 } else {
 	logger.info('Game engine idle: waiting for ROM');
@@ -145,8 +139,9 @@ if (config.RELAY_MODE === 'client') {
 		async () => {
 			const rawState = await redis.get(`game:state:${GAME_ID}`);
 			if (!rawState) return null;
-			const battle = JSON.parse(rawState) as import('./game/types.js').BattleState;
-			return { mode: 'battle' as const, battle };
+			// State is now UnifiedGameState; relay receives whatever is stored
+			const parsed = JSON.parse(rawState) as Record<string, unknown>;
+			return parsed as unknown as import('./game/types.js').GameState;
 		},
 	);
 
@@ -154,8 +149,9 @@ if (config.RELAY_MODE === 'client') {
 	logger.info('Home client started, connecting to relay');
 
 	// Push state to relay after each tick
-	tickProcessor.onTick(async (state) => {
-		await homeClient.pushState(state.turn, state.gameId, { mode: 'battle', battle: state });
+	unifiedProcessor.onTick(async (state) => {
+		// Relay receives the unified state serialized as GameState
+		await homeClient.pushState(state.turn, state.gameId, state as unknown as import('./game/types.js').GameState);
 	});
 }
 
@@ -282,7 +278,7 @@ app.get('/health', (res: HttpResponse, _req: HttpRequest) => {
 		status: 'ok',
 		time: Date.now(),
 		emulatorReady: emulator.isInitialized,
-		gameRunning: tickProcessor.isRunning(),
+		gameRunning: unifiedProcessor.isRunning(),
 	});
 });
 
@@ -402,10 +398,8 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 
 			const { action } = parsed.data;
 
-			// Get current tick from game state
-			const state = await stateManager.loadState(GAME_ID);
-			const tickId = state?.turn ?? 0;
-			if (aborted) return;
+			// Get current tick from unified processor
+			const tickId = unifiedProcessor.getCurrentTick();
 
 			// Atomic per-agent per-tick dedup via Lua script
 			const dedupResult = await voteAggregator.recordVote(GAME_ID, tickId, auth.agent.agentId, action);
@@ -509,7 +503,7 @@ app.listen(config.HOST, config.PORT, (token) => {
 
 function shutdown(): void {
 	logger.info('Shutting down...');
-	tickProcessor.stop();
+	unifiedProcessor.stop();
 	emulator.shutdown().catch((err: unknown) => {
 		logger.error({ err }, 'Error shutting down emulator');
 	});
