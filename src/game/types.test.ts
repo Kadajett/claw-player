@@ -3,12 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
 	ALL_GAME_ACTIONS,
 	BattlePhase,
+	DEFAULT_TICK_INTERVAL_MS,
+	GamePhase,
+	PokemonType,
+	SNAPSHOT_INTERVAL,
+	StatusCondition,
+	VALID_MOVE_INDICES,
+	VALID_SWITCH_INDICES,
+	VOTE_KEY_EXPIRY_SECONDS,
 	battleActionSchema,
 	battlePhaseSchema,
 	battleStateSchema,
-	DEFAULT_TICK_INTERVAL_MS,
 	directionSchema,
-	GamePhase,
 	gameActionSchema,
 	gameActionToGbButton,
 	gamePhaseSchema,
@@ -20,16 +26,10 @@ import {
 	npcInfoSchema,
 	overworldActionSchema,
 	overworldStateSchema,
-	PokemonType,
 	playerInfoSchema,
 	pokemonStateSchema,
 	pokemonTypeSchema,
-	SNAPSHOT_INTERVAL,
-	StatusCondition,
 	statusConditionSchema,
-	VALID_MOVE_INDICES,
-	VALID_SWITCH_INDICES,
-	VOTE_KEY_EXPIRY_SECONDS,
 	voteResultSchema,
 	voteSchema,
 } from './types.js';
@@ -330,6 +330,12 @@ describe('battleStateSchema', () => {
 			status: 'none',
 			types: ['normal'],
 			level: 10,
+			attack: 56,
+			defense: 35,
+			specialAttack: 25,
+			specialDefense: 35,
+			speed: 72,
+			moves: [],
 		},
 		availableActions: ['a', 'b'],
 		weather: 'clear',
@@ -420,7 +426,7 @@ describe('directionSchema', () => {
 });
 
 describe('mapLocationSchema', () => {
-	const valid = { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10 };
+	const valid = { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10, width: 20, height: 18 };
 
 	it('accepts valid location', () => {
 		expect(mapLocationSchema.safeParse(valid).success).toBe(true);
@@ -544,12 +550,13 @@ describe('overworldStateSchema', () => {
 
 	const valid = {
 		gamePhase: 'overworld',
-		location: { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10 },
+		location: { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10, width: 20, height: 18 },
 		playerDirection: 'down',
 		inBuilding: false,
 		canMove: true,
 		nearbyNpcs: [],
 		nearbyItems: [],
+		warps: [],
 		player: {
 			name: 'Red',
 			money: 3000,
@@ -621,6 +628,12 @@ describe('gameStateSchema', () => {
 			status: 'none',
 			types: ['normal'],
 			level: 10,
+			attack: 56,
+			defense: 35,
+			specialAttack: 25,
+			specialDefense: 35,
+			speed: 72,
+			moves: [],
 		},
 		availableActions: ['a'],
 		weather: 'clear',
@@ -632,12 +645,13 @@ describe('gameStateSchema', () => {
 
 	const validOverworld = {
 		gamePhase: 'overworld',
-		location: { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10 },
+		location: { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10, width: 20, height: 18 },
 		playerDirection: 'down',
 		inBuilding: false,
 		canMove: true,
 		nearbyNpcs: [],
 		nearbyItems: [],
+		warps: [],
 		player: {
 			name: 'Red',
 			money: 3000,

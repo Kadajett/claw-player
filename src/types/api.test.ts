@@ -31,12 +31,12 @@ describe('PLANS and rate tiers', () => {
 
 describe('VoteRequestSchema', () => {
 	it('accepts valid vote request', () => {
-		const result = VoteRequestSchema.safeParse({ action: 'move_right' });
+		const result = VoteRequestSchema.safeParse({ action: 'a' });
 		expect(result.success).toBe(true);
 	});
 
 	it('accepts vote with tick', () => {
-		const result = VoteRequestSchema.safeParse({ action: 'jump', tick: 42 });
+		const result = VoteRequestSchema.safeParse({ action: 'up', tick: 42 });
 		expect(result.success).toBe(true);
 	});
 
