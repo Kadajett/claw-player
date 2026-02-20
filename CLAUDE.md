@@ -1,15 +1,16 @@
 # Claw Player - Project Instructions
 
 ## Overview
-"Claw Plays" - A Twitch Plays Pokemon-style game where AI agents (OpenClaw/Claude) play Pokemon Red via an authenticated, rate-limited API. Agents vote on battle actions each tick (15s windows), the winning action is injected into a real Game Boy emulator, and the new battle state broadcasts to all connected agents.
+"Claw Plays" - A Twitch Plays Pokemon-style game where AI agents (OpenClaw/Claude) play Pokemon Red via an authenticated, rate-limited API. Agents vote on Game Boy button presses each tick (15s windows), the winning button is injected into a real Game Boy emulator, and the new game state broadcasts to all connected agents.
 
 ## Game: Pokemon Red (Game Boy)
 - Real Game Boy emulation via serverboy.js (headless Node.js emulator)
 - Users must supply their own Pokemon Red ROM (env: POKEMON_RED_ROM_PATH)
-- Battle state extracted from emulator RAM at known memory addresses
-- Democracy voting: agents vote on moves/switches, majority wins each turn
-- Actions: "move:0"-"move:3" (select attack), "switch:0"-"switch:5" (swap Pokemon), "run"
-- State includes: active Pokemon, HP, moves with PP, opponent info, type matchups, weather
+- Game state extracted from emulator RAM at known memory addresses
+- Democracy voting: agents vote on button presses, majority wins each turn
+- Actions: "up", "down", "left", "right", "a", "b", "start", "select" (the 8 GBC hardware buttons)
+- What buttons do depends on the game phase (battle, overworld, menu, dialogue)
+- State includes: phase, player info, party, inventory, battle state, overworld context, progress
 
 ## Architecture
 - **Ingestion Layer**: Hyper-Express (uWebSockets.js) for HTTP + WebSocket
@@ -42,6 +43,8 @@
 - Use pino logger, never console.log
 - Indent with tabs (Biome default)
 - Single quotes, trailing commas, semicolons
+- `GameAction` is the unified action type: `'up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'start' | 'select'`
+- `BattleAction` and `OverworldAction` are deprecated aliases kept for relay backward compat
 - Ban system Redis keys: `ban:agent:{agentId}`, `ban:ip:{ip}`, `ban:cidr` (sorted set), `ban:cidr:meta:{cidr}`, `ban:ua` (set), `violations:{agentId}`
 - Admin API routes: `/api/v1/admin/ban/*` and `/api/v1/admin/bans`, gated by `X-Admin-Secret` header
 - Vote dedup keys: `agent_votes:{gameId}:{tickId}` (hash), `votes:{gameId}:{tickId}` (sorted set)
@@ -50,23 +53,58 @@
 ## File Structure
 ```
 src/
-  server.ts              - Entry point, server startup
-  config.ts              - Environment config with Zod validation
-  types/                 - Shared TypeScript types and Zod schemas
-  auth/                  - API key validation, JWT, rate limiting, ban system, admin API
+  server.ts              - Game server entry point
+  relay-entry.ts         - Relay server entry point (standalone deployment)
+  config.ts              - Zod-validated environment config
+  logger.ts              - Pino logger factory (pretty-print in dev)
+  types/
+    api.ts               - REST/WebSocket Zod schemas, registration schemas
+    mcp.ts               - MCP tool I/O schemas, GameStateService interface
+  auth/
+    api-key.ts           - SHA-256 key hashing, Redis lookup, store/revoke
+    registration.ts      - Agent registration (agentId uniqueness, key generation)
+    rate-limiter.ts      - Token bucket middleware, X-RateLimit headers
+    ban.ts               - Ban check, ban/unban, auto-escalation, in-process cache
+    ban-types.ts         - Zod schemas for ban records, requests, results
+    admin.ts             - Admin secret validation (constant-time compare)
+    admin-routes.ts      - Admin API route registration (ban/unban/list endpoints)
+    ip.ts                - IP extraction from uWS and Node (Cloudflare, X-Forwarded-For)
+    cidr.ts              - IPv4 CIDR parsing and range matching
   game/
-    types.ts             - Pokemon battle types (PokemonState, BattleState, etc.)
-    emulator.ts          - serverboy.js wrapper (load ROM, advance frames, inject keys)
-    memory-map.ts        - Pokemon Red RAM addresses + state extraction
-    battle-engine.ts     - Maps vote actions to GB button presses
+    types.ts             - GameAction, GamePhase, Pokemon types, Zod schemas
+    type-chart.ts        - Gen 1 15x15 type effectiveness matrix
+    move-data.ts         - Complete Gen 1 move table (165 moves, type/power/accuracy/PP/category)
+    battle-engine.ts     - Battle action-to-button mapping
+    overworld-engine.ts  - Overworld movement, menus, dialogue
+    emulator.ts          - serverboy.js wrapper (ROM loading, frame advance, key injection)
+    emulator-interface.ts - Shared emulator interface (GbButton type, GameBoyEmulator)
+    mgba-emulator.ts     - mGBA TCP socket client (visual emulator backend)
+    mgba-client.ts       - mGBA low-level TCP protocol client
+    memory-map.ts        - Pokemon Red RAM addresses, all 151 species, state extraction
     vote-aggregator.ts   - Per-agent per-tick vote dedup via Lua script
-    state.ts             - Redis-backed battle state + event sourcing
+    state.ts             - Redis-backed BattleState + event sourcing
     tick-processor.ts    - Democracy tick loop (tally -> press -> extract -> broadcast)
-    type-chart.ts        - Gen 1 type effectiveness matrix
-  ws/                    - WebSocket connection handling, broadcast
-  mcp/                   - MCP server tools and transport
-  redis/                 - Redis client, Lua scripts (rate limit + vote dedup), connection pool
-  stream/                - OBS integration, visualizer state
+    game-state-service.ts - Unified GameStateService (reads RAM, transforms to API output)
+    state-poller.ts      - Periodic emulator state polling
+    tileset-collision.ts - Tile walkability checks per tileset
+    map-knowledge.ts     - Pre-trained navigation hints per map
+  mcp/
+    server.ts            - MCP HTTP server (port 3001)
+    auth-middleware.ts   - X-Api-Key validation
+    request-context.ts   - AsyncLocalStorage for agent identity
+    tools/
+      get-game-state.ts  - Unified game state (all phases)
+      submit-action.ts   - Vote for a button press
+      get-rate-limit.ts  - Rate limit check
+      get-history.ts     - Turn history + leaderboard
+  relay/
+    types.ts             - Relay message protocol (Zod discriminated unions)
+    config.ts            - Relay environment config (server/client mode)
+    server.ts            - Public relay server
+    home-client.ts       - Outbound home client
+  redis/
+    client.ts            - ioredis factory with auto-pipelining
+    lua-scripts.ts       - Atomic token bucket rate limiter + vote dedup script
 deploy/
   Dockerfile             - Multi-stage build (Ubuntu 24.04 runtime)
   build-and-push.sh      - Build image + push to local registry
