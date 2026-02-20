@@ -139,9 +139,7 @@ if (config.RELAY_MODE === 'client') {
 		async () => {
 			const rawState = await redis.get(`game:state:${GAME_ID}`);
 			if (!rawState) return null;
-			// State is now UnifiedGameState; relay receives whatever is stored
-			const parsed = JSON.parse(rawState) as Record<string, unknown>;
-			return parsed as unknown as import('./game/types.js').GameState;
+			return JSON.parse(rawState) as import('./game/memory-map.js').UnifiedGameState;
 		},
 	);
 
@@ -150,8 +148,7 @@ if (config.RELAY_MODE === 'client') {
 
 	// Push state to relay after each tick
 	unifiedProcessor.onTick(async (state) => {
-		// Relay receives the unified state serialized as GameState
-		await homeClient.pushState(state.turn, state.gameId, state as unknown as import('./game/types.js').GameState);
+		await homeClient.pushState(state.turn, state.gameId, state);
 	});
 }
 

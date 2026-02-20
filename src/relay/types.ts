@@ -1,8 +1,17 @@
 import { z } from 'zod';
-import type { GameState } from '../game/types.js';
-import { gameActionSchema, gameStateSchema } from '../game/types.js';
+import { gameActionSchema } from '../game/types.js';
 
-export type { GameState };
+// The relay passes game state through without deeply inspecting it.
+// Use a minimal passthrough schema so the relay stays format-agnostic.
+const relayGameStateSchema = z
+	.object({
+		gameId: z.string(),
+		turn: z.number().int().nonnegative(),
+		phase: z.string(),
+	})
+	.passthrough();
+
+export type RelayGameState = z.infer<typeof relayGameStateSchema>;
 
 // ─── Relay Message (Relay Server -> Agent) ────────────────────────────────────
 
@@ -24,7 +33,7 @@ export const RelayStateUpdateSchema = z.object({
 	type: z.literal('state_update'),
 	tickId: z.number().int().nonnegative(),
 	gameId: z.string(),
-	state: gameStateSchema,
+	state: relayGameStateSchema,
 });
 export type RelayStateUpdate = z.infer<typeof RelayStateUpdateSchema>;
 
@@ -69,7 +78,7 @@ export const HomeStatePushSchema = z.object({
 	type: z.literal('state_push'),
 	tickId: z.number().int().nonnegative(),
 	gameId: z.string(),
-	state: gameStateSchema,
+	state: relayGameStateSchema,
 });
 export type HomeStatePush = z.infer<typeof HomeStatePushSchema>;
 

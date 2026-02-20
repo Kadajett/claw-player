@@ -14,7 +14,7 @@ import { createLogger } from '../logger.js';
 import { createRedisClient, createRedisSubscriber } from '../redis/client.js';
 import { RegisterRequestSchema, VoteRequestSchema } from '../types/api.js';
 import { assertRelayServerConfig, loadRelayConfig } from './config.js';
-import type { GameState, HomeClientMessage, RelayMessage, VoteBufferEntry } from './types.js';
+import type { HomeClientMessage, RelayGameState, RelayMessage, VoteBufferEntry } from './types.js';
 import { HomeClientMessageSchema } from './types.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -75,7 +75,7 @@ export class RelayServer {
 	private homeWs: WebSocket<HomeWsData> | null = null;
 	private homeConnectedAt: number | null = null;
 	private lastHomeHeartbeatAt: number | null = null;
-	private cachedState: GameState | null = null;
+	private cachedState: RelayGameState | null = null;
 	private cachedTickId: number | null = null;
 	private cachedGameId: string | null = null;
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -217,7 +217,7 @@ export class RelayServer {
 			this.cachedTickId = msg.tickId;
 			this.cachedGameId = msg.gameId;
 			this.logger.info(
-				{ tickId: msg.tickId, gameId: msg.gameId, mode: msg.state.mode },
+				{ tickId: msg.tickId, gameId: msg.gameId, phase: msg.state.phase },
 				'State received from home client',
 			);
 			this.broadcastToAgents({
@@ -440,7 +440,7 @@ export class RelayServer {
 		return this.app;
 	}
 
-	getCachedState(): GameState | null {
+	getCachedState(): RelayGameState | null {
 		return this.cachedState;
 	}
 

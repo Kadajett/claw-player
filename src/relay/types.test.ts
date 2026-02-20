@@ -79,8 +79,24 @@ const validBattleState = {
 };
 
 const validGameState = {
-	mode: 'battle' as const,
+	gameId: 'game-1',
+	turn: 5,
+	phase: 'battle',
+	player: {
+		name: 'RED',
+		money: 1000,
+		badges: 2,
+		badgeList: ['Boulder', 'Cascade'],
+		location: { mapId: 1, mapName: 'Route 1', x: 10, y: 20 },
+		direction: 'down',
+		walkBikeSurf: 'walking',
+	},
+	party: [],
+	inventory: [],
 	battle: validBattleState,
+	overworld: null,
+	screen: { textBoxActive: false, menuState: null, menuText: null, screenText: null },
+	progress: { playTimeHours: 1, playTimeMinutes: 30, pokedexOwned: 5, pokedexSeen: 10 },
 };
 
 describe('RelayVoteBatchSchema', () => {
@@ -141,7 +157,7 @@ describe('RelayVoteBatchSchema', () => {
 });
 
 describe('RelayStateUpdateSchema', () => {
-	it('parses a valid state update with battle mode', () => {
+	it('parses a valid state update with unified game state', () => {
 		const result = RelayStateUpdateSchema.safeParse({
 			type: 'state_update',
 			tickId: 5,
@@ -151,12 +167,26 @@ describe('RelayStateUpdateSchema', () => {
 		expect(result.success).toBe(true);
 	});
 
-	it('rejects raw BattleState without mode wrapper', () => {
+	it('passes through extra state fields', () => {
 		const result = RelayStateUpdateSchema.safeParse({
 			type: 'state_update',
 			tickId: 5,
 			gameId: 'game-1',
-			state: validBattleState,
+			state: validGameState,
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.state.phase).toBe('battle');
+			expect(result.data.state.gameId).toBe('game-1');
+		}
+	});
+
+	it('rejects state missing required fields', () => {
+		const result = RelayStateUpdateSchema.safeParse({
+			type: 'state_update',
+			tickId: 5,
+			gameId: 'game-1',
+			state: { someField: 'not a valid state' },
 		});
 		expect(result.success).toBe(false);
 	});
@@ -230,7 +260,7 @@ describe('HomeVotesRequestSchema', () => {
 });
 
 describe('HomeStatePushSchema', () => {
-	it('parses a valid state_push with battle mode', () => {
+	it('parses a valid state_push with unified game state', () => {
 		const result = HomeStatePushSchema.safeParse({
 			type: 'state_push',
 			tickId: 5,
@@ -240,12 +270,12 @@ describe('HomeStatePushSchema', () => {
 		expect(result.success).toBe(true);
 	});
 
-	it('rejects raw BattleState without mode wrapper', () => {
+	it('rejects state missing required fields', () => {
 		const result = HomeStatePushSchema.safeParse({
 			type: 'state_push',
 			tickId: 5,
 			gameId: 'game-1',
-			state: validBattleState,
+			state: { someField: 'not valid' },
 		});
 		expect(result.success).toBe(false);
 	});
