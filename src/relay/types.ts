@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import type { BattleState } from '../game/types.js';
-import { battleStateSchema, gameActionSchema } from '../game/types.js';
+import type { GameState } from '../game/types.js';
+import { gameActionSchema, gameStateSchema } from '../game/types.js';
 
-export type { BattleState };
+export type { GameState };
 
 // ─── Relay Message (Relay Server -> Agent) ────────────────────────────────────
 
@@ -24,7 +24,7 @@ export const RelayStateUpdateSchema = z.object({
 	type: z.literal('state_update'),
 	tickId: z.number().int().nonnegative(),
 	gameId: z.string(),
-	state: battleStateSchema,
+	state: gameStateSchema,
 });
 export type RelayStateUpdate = z.infer<typeof RelayStateUpdateSchema>;
 
@@ -69,7 +69,7 @@ export const HomeStatePushSchema = z.object({
 	type: z.literal('state_push'),
 	tickId: z.number().int().nonnegative(),
 	gameId: z.string(),
-	state: battleStateSchema,
+	state: gameStateSchema,
 });
 export type HomeStatePush = z.infer<typeof HomeStatePushSchema>;
 

@@ -33,7 +33,7 @@ class FakeWebSocket {
 		this.url = url;
 	}
 
-	on(event: string, handler: EventHandler): void {
+	addEventListener(event: string, handler: EventHandler): void {
 		const existing = this.handlers.get(event) ?? [];
 		existing.push(handler);
 		this.handlers.set(event, existing);
@@ -72,40 +72,43 @@ class FakeWebSocket {
 	}
 }
 
-const validBattleState = {
-	gameId: 'game-1',
-	turn: 5,
-	phase: 'choose_action' as const,
-	playerActive: {
-		species: 'Charizard',
-		level: 36,
-		hp: 112,
-		maxHp: 126,
-		attack: 80,
-		defense: 70,
-		specialAttack: 90,
-		specialDefense: 75,
-		speed: 100,
-		status: 'none' as const,
-		types: ['fire' as const, 'flying' as const],
-		moves: [],
+const validGameState = {
+	mode: 'battle' as const,
+	battle: {
+		gameId: 'game-1',
+		turn: 5,
+		phase: 'choose_action' as const,
+		playerActive: {
+			species: 'Charizard',
+			level: 36,
+			hp: 112,
+			maxHp: 126,
+			attack: 80,
+			defense: 70,
+			specialAttack: 90,
+			specialDefense: 75,
+			speed: 100,
+			status: 'none' as const,
+			types: ['fire' as const, 'flying' as const],
+			moves: [],
+		},
+		playerParty: [],
+		opponent: {
+			species: 'Blastoise',
+			hp: 77,
+			maxHp: 120,
+			hpPercent: 64,
+			status: 'none' as const,
+			types: ['water' as const],
+			level: 38,
+		},
+		availableActions: ['a' as const, 'b' as const],
+		weather: 'none',
+		turnHistory: [],
+		lastAction: null,
+		createdAt: 1_000_000,
+		updatedAt: 1_000_100,
 	},
-	playerParty: [],
-	opponent: {
-		species: 'Blastoise',
-		hp: 77,
-		maxHp: 120,
-		hpPercent: 64,
-		status: 'none' as const,
-		types: ['water' as const],
-		level: 38,
-	},
-	availableActions: ['move:0' as const, 'move:1' as const],
-	weather: 'none',
-	turnHistory: [],
-	lastAction: null,
-	createdAt: 1_000_000,
-	updatedAt: 1_000_100,
 };
 
 // biome-ignore lint/style/useNamingConvention: WebSocket is a standard Web API name
@@ -249,7 +252,7 @@ describe('HomeClient', () => {
 				type: 'vote_batch',
 				tickId: 3,
 				gameId: 'game-1',
-				votes: [{ agentId: 'agent-1', action: 'move:0', timestamp: 1_700_000_000 }],
+				votes: [{ agentId: 'agent-1', action: 'a', timestamp: 1_700_000_000 }],
 			};
 
 			fakeWs.simulateMessage(JSON.stringify(batch));
@@ -264,7 +267,7 @@ describe('HomeClient', () => {
 			fakeWs.simulateOpen();
 			const sentBefore = fakeWs.sentMessages.length;
 
-			await client.pushState(5, 'game-1', validBattleState);
+			await client.pushState(5, 'game-1', validGameState);
 
 			const sentAfter = fakeWs.sentMessages.length;
 			expect(sentAfter).toBeGreaterThan(sentBefore);
@@ -278,7 +281,7 @@ describe('HomeClient', () => {
 
 		it('does not throw when not connected', async () => {
 			const client = makeClient();
-			await expect(client.pushState(5, 'game-1', validBattleState)).resolves.toBeUndefined();
+			await expect(client.pushState(5, 'game-1', validGameState)).resolves.toBeUndefined();
 		});
 	});
 
