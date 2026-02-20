@@ -66,7 +66,7 @@ export class LiveGameStateService implements GameStateService {
 
 		const tickId = state.turn;
 
-		await this.voteAggregator.recordVote(this.gameId, tickId, agentId, action as import('./types.js').BattleAction);
+		await this.voteAggregator.recordVote(this.gameId, tickId, agentId, action as import('./types.js').GameAction);
 
 		this.logger.info({ agentId, action, tickId }, 'Vote submitted via MCP');
 

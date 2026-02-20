@@ -4,6 +4,7 @@ import {
 	BattlePhase,
 	type BattleState,
 	type Direction,
+	type GameAction,
 	GamePhase,
 	type InventoryItem,
 	type MapLocation,
@@ -406,7 +407,7 @@ export function extractOpponentPokemon(ram: ReadonlyArray<number>): OpponentStat
 	};
 }
 
-export function buildAvailableActions(player: PokemonState): Array<BattleAction> {
+export function buildAvailableActions(player: PokemonState): Array<GameAction> {
 	const actions: Array<BattleAction> = [];
 	for (const i of [0, 1, 2, 3] as const) {
 		const move = player.moves[i];
@@ -418,7 +419,7 @@ export function buildAvailableActions(player: PokemonState): Array<BattleAction>
 		actions.push('move:0'); // Struggle fallback
 	}
 	actions.push('run');
-	return actions;
+	return actions as unknown as Array<GameAction>;
 }
 
 export function extractBattleState(ram: ReadonlyArray<number>, gameId: string, turn: number): BattleState {

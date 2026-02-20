@@ -1,6 +1,8 @@
 import type { Operation } from 'fast-json-patch';
 import { z } from 'zod';
 
+import type { GbButton } from './emulator-interface.js';
+
 export type { Operation };
 
 // ─── Pokemon Types ───────────────────────────────────────────────────────────
@@ -137,8 +139,10 @@ export const battlePhaseSchema = z.nativeEnum(BattlePhase);
 export const VALID_MOVE_INDICES = [0, 1, 2, 3] as const;
 export const VALID_SWITCH_INDICES = [0, 1, 2, 3, 4, 5] as const;
 
+/** @deprecated Use GameAction instead. Kept temporarily for relay backward compat. */
 export type BattleAction = `move:${0 | 1 | 2 | 3}` | `switch:${0 | 1 | 2 | 3 | 4 | 5}` | 'run';
 
+/** @deprecated Use gameActionSchema instead. Kept temporarily for relay backward compat. */
 export const battleActionSchema = z.string().refine((val): val is BattleAction => {
 	if (val === 'run') return true;
 	const moveMatch = /^move:[0-3]$/.exec(val);
@@ -147,18 +151,49 @@ export const battleActionSchema = z.string().refine((val): val is BattleAction =
 	return switchMatch !== null;
 }, 'Invalid battle action');
 
+// ─── GameAction ───────────────────────────────────────────────────────────────
+
+export type GameAction = 'up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'start' | 'select';
+
+export const gameActionSchema = z.enum(['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select']);
+
+export const ALL_GAME_ACTIONS: ReadonlyArray<GameAction> = [
+	'up',
+	'down',
+	'left',
+	'right',
+	'a',
+	'b',
+	'start',
+	'select',
+] as const;
+
+export function gameActionToGbButton(action: GameAction): GbButton {
+	const map: Record<GameAction, GbButton> = {
+		up: 'UP',
+		down: 'DOWN',
+		left: 'LEFT',
+		right: 'RIGHT',
+		a: 'A',
+		b: 'B',
+		start: 'START',
+		select: 'SELECT',
+	};
+	return map[action];
+}
+
 // ─── Turn History Entry ───────────────────────────────────────────────────────
 
 export type TurnHistoryEntry = {
 	turn: number;
-	action: BattleAction;
+	action: string;
 	description: string;
 	totalVotes: number;
 };
 
 export const turnHistoryEntrySchema = z.object({
 	turn: z.number().int().min(0),
-	action: battleActionSchema,
+	action: z.string(),
 	description: z.string(),
 	totalVotes: z.number().int().min(0),
 });
@@ -172,7 +207,7 @@ export type BattleState = {
 	playerActive: PokemonState;
 	playerParty: Array<PokemonState>;
 	opponent: OpponentState;
-	availableActions: Array<BattleAction>;
+	availableActions: Array<GameAction>;
 	weather: string;
 	turnHistory: Array<TurnHistoryEntry>;
 	lastAction: BattleAction | null;
@@ -187,7 +222,7 @@ export const battleStateSchema = z.object({
 	playerActive: pokemonStateSchema,
 	playerParty: z.array(pokemonStateSchema).max(6),
 	opponent: opponentStateSchema,
-	availableActions: z.array(battleActionSchema),
+	availableActions: z.array(gameActionSchema),
 	weather: z.string(),
 	turnHistory: z.array(turnHistoryEntrySchema),
 	lastAction: battleActionSchema.nullable(),
@@ -199,7 +234,7 @@ export const battleStateSchema = z.object({
 
 export type Vote = {
 	agentId: string;
-	action: BattleAction;
+	action: GameAction;
 	tickId: number;
 	gameId: string;
 	timestamp: number;
@@ -207,7 +242,7 @@ export type Vote = {
 
 export const voteSchema = z.object({
 	agentId: z.string(),
-	action: battleActionSchema,
+	action: gameActionSchema,
 	tickId: z.number().int().min(0),
 	gameId: z.string(),
 	timestamp: z.number().int().positive(),
@@ -216,7 +251,7 @@ export const voteSchema = z.object({
 export type VoteResult = {
 	tickId: number;
 	gameId: string;
-	winningAction: BattleAction;
+	winningAction: GameAction;
 	voteCounts: Record<string, number>;
 	totalVotes: number;
 };
@@ -224,7 +259,7 @@ export type VoteResult = {
 export const voteResultSchema = z.object({
 	tickId: z.number().int().min(0),
 	gameId: z.string(),
-	winningAction: battleActionSchema,
+	winningAction: gameActionSchema,
 	voteCounts: z.record(z.string(), z.number().int().min(0)),
 	totalVotes: z.number().int().min(0),
 });
@@ -251,7 +286,6 @@ export type StateDelta = {
 export const SNAPSHOT_INTERVAL = 10 as const;
 export const VOTE_KEY_EXPIRY_SECONDS = 3600 as const;
 export const DEFAULT_TICK_INTERVAL_MS = 15_000 as const;
-export const DEFAULT_FALLBACK_ACTION: BattleAction = 'move:0';
 
 // ─── Game Phase ───────────────────────────────────────────────────────────────
 
@@ -267,9 +301,11 @@ export const gamePhaseSchema = z.nativeEnum(GamePhase);
 
 // ─── Overworld Action ─────────────────────────────────────────────────────────
 
-export type OverworldAction = 'up' | 'down' | 'left' | 'right' | 'a_button' | 'b_button' | 'start' | 'select';
+/** @deprecated Use GameAction instead. */
+export type OverworldAction = GameAction;
 
-export const overworldActionSchema = z.enum(['up', 'down', 'left', 'right', 'a_button', 'b_button', 'start', 'select']);
+/** @deprecated Use gameActionSchema instead. */
+export const overworldActionSchema = gameActionSchema;
 
 // ─── Direction ────────────────────────────────────────────────────────────────
 
