@@ -78,8 +78,8 @@ export const LeaderboardEntry = z.object({
 });
 export type LeaderboardEntry = z.infer<typeof LeaderboardEntry>;
 
-// Tool: get_game_state
-// Returns the full Pokemon battle state with gamification hooks
+// Tool: get_game_state (battle-only, deprecated)
+/** @deprecated Use GetGameStateOutput instead. This schema only covers battle state. */
 export const GetBattleStateOutput = z.object({
 	turn: z.number().nonnegative(),
 	phase: z.enum(['voting', 'executing', 'idle']),
@@ -105,9 +105,176 @@ export const GetBattleStateOutput = z.object({
 });
 export type GetBattleStateOutput = z.infer<typeof GetBattleStateOutput>;
 
-// Kept for backward compatibility alias
-export const GetGameStateOutput = GetBattleStateOutput;
-export type GetGameStateOutput = GetBattleStateOutput;
+// ─── Unified Game State Sub-Schemas (Issue #13) ─────────────────────────────
+
+export const PartyPokemonMoveSchema = z.object({
+	name: z.string(),
+	moveId: z.number(),
+	pp: z.number(),
+	maxPp: z.number(),
+	type: z.string(),
+	power: z.number(),
+});
+export type PartyPokemonMoveSchema = z.infer<typeof PartyPokemonMoveSchema>;
+
+export const PartyPokemonSchema = z.object({
+	species: z.string(),
+	speciesId: z.number(),
+	nickname: z.string(),
+	level: z.number(),
+	hp: z.number(),
+	maxHp: z.number(),
+	status: z.string(),
+	moves: z.array(PartyPokemonMoveSchema),
+	stats: z.object({
+		attack: z.number(),
+		defense: z.number(),
+		speed: z.number(),
+		specialAttack: z.number(),
+		specialDefense: z.number(),
+	}),
+});
+export type PartyPokemonSchema = z.infer<typeof PartyPokemonSchema>;
+
+export const BattleActivePokemonSchema = PartyPokemonSchema.extend({
+	types: z.array(z.string()),
+});
+export type BattleActivePokemonSchema = z.infer<typeof BattleActivePokemonSchema>;
+
+export const BattleOpponentSchema = z.object({
+	species: z.string(),
+	level: z.number(),
+	hp: z.number(),
+	maxHp: z.number(),
+	status: z.string(),
+	types: z.array(z.string()),
+	knownMoves: z.array(PartyPokemonMoveSchema),
+	stats: z.object({
+		attack: z.number(),
+		defense: z.number(),
+		speed: z.number(),
+		specialAttack: z.number(),
+		specialDefense: z.number(),
+	}),
+	trainerClass: z.number(),
+	partyCount: z.number(),
+});
+export type BattleOpponentSchema = z.infer<typeof BattleOpponentSchema>;
+
+export const StatModSchema = z.object({
+	attack: z.number().min(-6).max(6),
+	defense: z.number().min(-6).max(6),
+	speed: z.number().min(-6).max(6),
+	special: z.number().min(-6).max(6),
+	accuracy: z.number().min(-6).max(6),
+	evasion: z.number().min(-6).max(6),
+});
+export type StatModSchema = z.infer<typeof StatModSchema>;
+
+export const InventoryItemSchema = z.object({
+	itemId: z.number(),
+	name: z.string(),
+	quantity: z.number(),
+});
+export type InventoryItemSchema = z.infer<typeof InventoryItemSchema>;
+
+export const MoveEffectivenessSchema = z.object({
+	slot: z.number(),
+	moveName: z.string(),
+	effectiveness: z.number(),
+});
+export type MoveEffectivenessSchema = z.infer<typeof MoveEffectivenessSchema>;
+
+// Tool: get_game_state (unified, all game phases)
+export const GetGameStateOutput = z.object({
+	// Core (always present)
+	turn: z.number(),
+	phase: z.enum(['overworld', 'battle', 'menu', 'dialogue']),
+	secondsRemaining: z.number(),
+	availableActions: z.array(GameActionSchema),
+
+	// Player context (always present)
+	player: z.object({
+		name: z.string(),
+		money: z.number(),
+		badges: z.number(),
+		badgeList: z.array(z.string()),
+		location: z.object({
+			mapId: z.number(),
+			mapName: z.string(),
+			x: z.number(),
+			y: z.number(),
+		}),
+		direction: z.enum(['up', 'down', 'left', 'right']),
+		walkBikeSurf: z.enum(['walking', 'biking', 'surfing']),
+	}),
+
+	// Party (always present)
+	party: z.array(PartyPokemonSchema),
+
+	// Inventory (always present)
+	inventory: z.array(InventoryItemSchema),
+
+	// Battle state (null when not in battle)
+	battle: z
+		.object({
+			type: z.enum(['wild', 'trainer']),
+			playerActive: BattleActivePokemonSchema,
+			opponent: BattleOpponentSchema,
+			moveEffectiveness: z.array(MoveEffectivenessSchema),
+			statModifiers: z.object({
+				player: StatModSchema,
+				enemy: StatModSchema,
+			}),
+			battleStatus: z.object({
+				playerFlags: z.array(z.string()),
+				enemyFlags: z.array(z.string()),
+			}),
+			turnCount: z.number(),
+		})
+		.nullable(),
+
+	// Overworld context (null in battle)
+	overworld: z
+		.object({
+			tileInFront: z.object({ tileId: z.number(), description: z.string() }),
+			hmAvailable: z.object({
+				cut: z.boolean(),
+				fly: z.boolean(),
+				surf: z.boolean(),
+				strength: z.boolean(),
+				flash: z.boolean(),
+			}),
+			wildEncounterRate: z.number(),
+		})
+		.nullable(),
+
+	// Screen state (always check these)
+	screenText: z.string().nullable(),
+	menuState: z
+		.object({
+			text: z.string(),
+			currentItem: z.number(),
+			maxItems: z.number(),
+		})
+		.nullable(),
+
+	// Game progress
+	progress: z.object({
+		playTimeHours: z.number(),
+		playTimeMinutes: z.number(),
+		pokedexOwned: z.number(),
+		pokedexSeen: z.number(),
+	}),
+
+	// Gamification (kept from existing)
+	yourScore: z.number(),
+	yourRank: z.number(),
+	totalAgents: z.number(),
+	streak: z.number(),
+	tip: z.string(),
+});
+export type GetGameStateOutput = z.infer<typeof GetGameStateOutput>;
 
 // Tool: submit_action
 export const SubmitActionInput = z.object({
