@@ -1,9 +1,18 @@
 import HyperExpress from 'hyper-express';
 import type { Request, Response } from 'hyper-express';
 import pino from 'pino';
+
 import { lookupApiKey } from './auth/api-key.js';
 import { AGENT_LOCALS_KEY, buildRateLimitMiddleware, getAgentFromLocals } from './auth/rate-limiter.js';
 import { loadConfig } from './config.js';
+import { Emulator } from './game/emulator.js';
+import { createGameStateService } from './game/game-state-service.js';
+import type { LiveGameStateService } from './game/game-state-service.js';
+import { extractBattleState } from './game/memory-map.js';
+import { StateManager } from './game/state.js';
+import { TickProcessor } from './game/tick-processor.js';
+import { VoteAggregator } from './game/vote-aggregator.js';
+import { createMcpHttpServer } from './mcp/server.js';
 import { createRedisClient } from './redis/client.js';
 import { VoteRequestSchema, WsIncomingMessageSchema } from './types/api.js';
 import type { WsOutgoingMessage } from './types/api.js';
@@ -20,10 +29,68 @@ if (config.NODE_ENV !== 'production') {
 
 const logger = pino(pinoOptions);
 
+// ─── Redis ──────────────────────────────────────────────────────────────────
+
 const redis = createRedisClient(config.REDIS_URL);
 await redis.connect();
+logger.info({ url: config.REDIS_URL }, 'Redis connected');
 
-logger.info({ host: config.HOST, port: config.PORT }, 'Claw Player server starting');
+// ─── Emulator ───────────────────────────────────────────────────────────────
+
+const emulator = new Emulator();
+
+if (config.POKEMON_RED_ROM_PATH) {
+	try {
+		emulator.loadRom(config.POKEMON_RED_ROM_PATH);
+		logger.info({ path: config.POKEMON_RED_ROM_PATH }, 'ROM loaded');
+	} catch (err) {
+		logger.error({ err, path: config.POKEMON_RED_ROM_PATH }, 'Failed to load ROM');
+	}
+} else {
+	logger.warn('No POKEMON_RED_ROM_PATH set. Emulator will not be initialized.');
+}
+
+// ─── Game Engine ────────────────────────────────────────────────────────────
+
+const GAME_ID = 'default';
+const stateManager = new StateManager(redis, logger.child({ module: 'state-manager' }));
+const voteAggregator = new VoteAggregator(redis, logger.child({ module: 'vote-aggregator' }));
+const tickProcessor = new TickProcessor(stateManager, voteAggregator, logger.child({ module: 'tick-processor' }), {
+	tickIntervalMs: config.TICK_INTERVAL_MS,
+});
+
+// ─── Game State Service (MCP bridge) ────────────────────────────────────────
+
+const gameStateService: LiveGameStateService = createGameStateService({
+	redis,
+	stateManager,
+	voteAggregator,
+	logger: logger.child({ module: 'game-state-service' }),
+	gameId: GAME_ID,
+	tickIntervalMs: config.TICK_INTERVAL_MS,
+});
+
+// Initialize game state if emulator is ready
+if (emulator.isInitialized) {
+	const ram = emulator.getRAM();
+	const initialState = extractBattleState(ram, GAME_ID, 0);
+	await stateManager.saveState(initialState);
+	await tickProcessor.start(GAME_ID);
+	logger.info({ gameId: GAME_ID, tickIntervalMs: config.TICK_INTERVAL_MS }, 'Game engine started');
+} else {
+	logger.info('Game engine idle: waiting for ROM');
+}
+
+// ─── MCP Server ─────────────────────────────────────────────────────────────
+
+const mcpServer = createMcpHttpServer({
+	redis,
+	gameStateService,
+	port: config.MCP_PORT,
+	host: config.HOST,
+});
+
+// ─── HTTP + WebSocket Server ────────────────────────────────────────────────
 
 const app = new HyperExpress.Server();
 
@@ -46,7 +113,12 @@ async function authMiddleware(req: Request, res: Response): Promise<void> {
 const rateLimitMiddleware = buildRateLimitMiddleware(redis);
 
 app.get('/health', (_req: Request, res: Response) => {
-	res.json({ status: 'ok', time: Date.now() });
+	res.json({
+		status: 'ok',
+		time: Date.now(),
+		emulatorReady: emulator.isInitialized,
+		gameRunning: tickProcessor.isRunning(),
+	});
 });
 
 const apiRouter = new HyperExpress.Router();
@@ -54,7 +126,7 @@ apiRouter.use(authMiddleware);
 apiRouter.use(rateLimitMiddleware);
 
 apiRouter.get('/state', async (_req: Request, res: Response) => {
-	const rawState = await redis.get('game:state');
+	const rawState = await redis.get('game:state:default');
 	if (!rawState) {
 		res.status(503).json({ error: 'Game state unavailable', code: 'STATE_UNAVAILABLE' });
 		return;
@@ -157,4 +229,21 @@ app.ws(
 );
 
 await app.listen(config.PORT, config.HOST);
-logger.info({ host: config.HOST, port: config.PORT }, 'Server listening');
+logger.info({ host: config.HOST, port: config.PORT }, 'HTTP server listening');
+logger.info({ host: config.HOST, port: config.MCP_PORT }, 'MCP server listening');
+
+// ─── Graceful Shutdown ──────────────────────────────────────────────────────
+
+function shutdown(): void {
+	logger.info('Shutting down...');
+	tickProcessor.stop();
+	emulator.shutdown();
+	mcpServer.close();
+	app.close();
+	redis.quit().catch((err: unknown) => {
+		logger.error({ err }, 'Error closing Redis');
+	});
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
