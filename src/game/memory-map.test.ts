@@ -7,19 +7,24 @@ import {
 	ADDR_CURRENT_MENU_ITEM,
 	ADDR_CUR_MENU_ITEM,
 	ADDR_CUR_OPPONENT,
+	ADDR_ENEMY_ACCURACY_MOD,
 	ADDR_ENEMY_ATTACK,
 	ADDR_ENEMY_ATTACK_MOD,
 	ADDR_ENEMY_BATTLE_STATUS1,
 	ADDR_ENEMY_BATTLE_STATUS2,
 	ADDR_ENEMY_BATTLE_STATUS3,
 	ADDR_ENEMY_DEFENSE,
+	ADDR_ENEMY_DEFENSE_MOD,
+	ADDR_ENEMY_EVASION_MOD,
 	ADDR_ENEMY_HP_HIGH,
 	ADDR_ENEMY_MAX_HP_HIGH,
 	ADDR_ENEMY_MOVES,
 	ADDR_ENEMY_PARTY_COUNT,
 	ADDR_ENEMY_PP,
 	ADDR_ENEMY_SPECIAL,
+	ADDR_ENEMY_SPECIAL_MOD,
 	ADDR_ENEMY_SPEED,
+	ADDR_ENEMY_SPEED_MOD,
 	ADDR_ENEMY_SUBSTITUTE_HP,
 	ADDR_GRASS_MONS_START,
 	ADDR_GRASS_RATE,
@@ -48,6 +53,7 @@ import {
 	ADDR_PLAYER_EVASION_MOD,
 	ADDR_PLAYER_HP_HIGH,
 	ADDR_PLAYER_LEVEL,
+	ADDR_PLAYER_PP,
 	ADDR_PLAYER_SPECIAL,
 	ADDR_PLAYER_SPECIAL_MOD,
 	ADDR_PLAYER_SPECIES,
@@ -107,6 +113,7 @@ import {
 	extractOverworldState,
 	extractPlayerBattleStats,
 	extractPlayerPokemon,
+	extractUnifiedGameState,
 	isInBattle,
 	isTextBoxActive,
 	isTrainerBattle,
@@ -2187,13 +2194,7 @@ function makeDialogueRam(lines: Array<string>): ReadonlyArray<number> {
 	return ram;
 }
 
-function writeMenuItemRow(
-	ram: Array<number>,
-	row: number,
-	startCol: number,
-	text: string,
-	hasCursor: boolean,
-): void {
+function writeMenuItemRow(ram: Array<number>, row: number, startCol: number, text: string, hasCursor: boolean): void {
 	const rowAddr = SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH;
 	ram[rowAddr + startCol] = 0x7c; // TILE_BOX_VERT_LEFT
 	let col = startCol + 1;
@@ -2356,5 +2357,416 @@ describe('issue #21 address constants', () => {
 
 	it('has correct address for wd730 (text status flags)', () => {
 		expect(ADDR_TEXT_STATUS_FLAGS).toBe(0xd730);
+	});
+});
+
+// ─── extractUnifiedGameState Tests (Issue #12) ──────────────────────────────
+
+describe('extractUnifiedGameState', () => {
+	// Helper to set up a basic overworld RAM state
+	function makeOverworldRam(overrides?: Record<number, number>): ReadonlyArray<number> {
+		return makeRam({
+			// Player name: "RED"
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x91,
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x84,
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x83,
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x50,
+			// Money: $500
+			[OVERWORLD_PLAYER_MONEY]: 0x00,
+			[OVERWORLD_PLAYER_MONEY + 1]: 0x05,
+			[OVERWORLD_PLAYER_MONEY + 2]: 0x00,
+			// Badges: Boulder
+			[OVERWORLD_BADGES]: 0x01,
+			// Pallet Town
+			[OVERWORLD_CUR_MAP]: 0x00,
+			[OVERWORLD_X_COORD]: 5,
+			[OVERWORLD_Y_COORD]: 3,
+			// Facing up
+			[ADDR_PLAYER_DIRECTION]: 0x04,
+			...overrides,
+		});
+	}
+
+	// Helper to set up a wild battle RAM state
+	function makeWildBattleRam(overrides?: Record<number, number>): ReadonlyArray<number> {
+		return makeRam({
+			// Battle type: wild
+			[ADDR_BATTLE_TYPE]: 1,
+			// Player Pokemon: Pikachu (species 0x54)
+			[ADDR_PLAYER_SPECIES]: 0x54,
+			[ADDR_PLAYER_LEVEL]: 25,
+			[ADDR_PLAYER_HP_HIGH]: 0x00,
+			[ADDR_PLAYER_HP_HIGH + 1]: 50,
+			[0xd023]: 0x00, // max HP high
+			[0xd024]: 80, // max HP low
+			[ADDR_PLAYER_ATTACK]: 0x00,
+			[ADDR_PLAYER_ATTACK + 1]: 55,
+			[ADDR_PLAYER_DEFENSE]: 0x00,
+			[ADDR_PLAYER_DEFENSE + 1]: 40,
+			[ADDR_PLAYER_SPEED]: 0x00,
+			[ADDR_PLAYER_SPEED + 1]: 90,
+			[ADDR_PLAYER_SPECIAL]: 0x00,
+			[ADDR_PLAYER_SPECIAL + 1]: 50,
+			// Player types: Electric
+			[0xd019]: 0x17,
+			[0xd01a]: 0x17,
+			// Player moves: Thunderbolt (move 0x55 = 85)
+			[0xd01c]: 0x55,
+			[ADDR_PLAYER_PP]: 15,
+			// Enemy Pokemon
+			[0xcfe5]: 0x99, // Bulbasaur
+			[ADDR_ENEMY_HP_HIGH]: 0x00,
+			[ADDR_ENEMY_HP_HIGH + 1]: 40,
+			[0xcfe8]: 0x00, // max HP high
+			[0xcfe8 + 1]: 45, // max HP low (0xCFE9 is status, 0xCFE8 is max HP)
+			// Actually, let me fix enemy addresses
+			[0xcfea]: 0x16, // enemy type1: Grass
+			[0xcfeb]: 0x03, // enemy type2: Poison
+			[0xcff3]: 10, // enemy level
+			[ADDR_ENEMY_ATTACK]: 0x00,
+			[ADDR_ENEMY_ATTACK + 1]: 30,
+			[ADDR_ENEMY_DEFENSE]: 0x00,
+			[ADDR_ENEMY_DEFENSE + 1]: 35,
+			[ADDR_ENEMY_SPEED]: 0x00,
+			[ADDR_ENEMY_SPEED + 1]: 28,
+			[ADDR_ENEMY_SPECIAL]: 0x00,
+			[ADDR_ENEMY_SPECIAL + 1]: 40,
+			// Enemy moves: Tackle
+			[ADDR_ENEMY_MOVES]: 0x21,
+			[ADDR_ENEMY_PP]: 35,
+			// Player name
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x91,
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x84,
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x83,
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x50,
+			// Turn count
+			[ADDR_BATTLE_TURN_COUNT]: 3,
+			// Stat modifiers (all neutral)
+			[ADDR_PLAYER_ATTACK_MOD]: 7,
+			[ADDR_PLAYER_DEFENSE_MOD]: 7,
+			[ADDR_PLAYER_SPEED_MOD]: 7,
+			[ADDR_PLAYER_SPECIAL_MOD]: 7,
+			[ADDR_PLAYER_ACCURACY_MOD]: 7,
+			[ADDR_PLAYER_EVASION_MOD]: 7,
+			[ADDR_ENEMY_ATTACK_MOD]: 7,
+			[ADDR_ENEMY_DEFENSE_MOD]: 7,
+			[ADDR_ENEMY_SPEED_MOD]: 7,
+			[ADDR_ENEMY_SPECIAL_MOD]: 7,
+			[ADDR_ENEMY_ACCURACY_MOD]: 7,
+			[ADDR_ENEMY_EVASION_MOD]: 7,
+			...overrides,
+		});
+	}
+
+	// ─── Core Fields ─────────────────────────────────────────────────────────
+
+	it('returns gameId, turn, and phase', () => {
+		const ram = makeOverworldRam();
+		const state = extractUnifiedGameState(ram, 'game-123', 42);
+		expect(state.gameId).toBe('game-123');
+		expect(state.turn).toBe(42);
+		expect(state.phase).toBe(GamePhase.Overworld);
+	});
+
+	it('returns Battle phase when in battle', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'game-1', 1);
+		expect(state.phase).toBe(GamePhase.Battle);
+	});
+
+	// ─── Player Info ─────────────────────────────────────────────────────────
+
+	it('always populates player info', () => {
+		const ram = makeOverworldRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.player.name).toBe('RED');
+		expect(state.player.money).toBe(500);
+		expect(state.player.badges).toBe(1);
+		expect(state.player.badgeList).toContain('Boulder Badge');
+		expect(state.player.location.mapId).toBe(0);
+		expect(state.player.location.mapName).toBe('Pallet Town');
+		expect(state.player.location.x).toBe(5);
+		expect(state.player.location.y).toBe(3);
+		expect(state.player.direction).toBe('up');
+		expect(state.player.walkBikeSurf).toBe('walking');
+	});
+
+	it('reads correct movement mode', () => {
+		const ram = makeOverworldRam({ [0xd700]: 1 }); // biking
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.player.walkBikeSurf).toBe('biking');
+	});
+
+	it('player info is populated during battle too', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.player.name).toBe('RED');
+	});
+
+	// ─── Party ───────────────────────────────────────────────────────────────
+
+	it('always populates party (empty when no Pokemon)', () => {
+		const ram = makeOverworldRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(Array.isArray(state.party)).toBe(true);
+	});
+
+	it('reads party with Pokemon data', () => {
+		const overrides: Record<number, number> = {};
+		overrides[ADDR_PARTY_COUNT] = 1;
+		const base = ADDR_PARTY_MONS;
+		overrides[base] = 0x54; // Pikachu
+		overrides[base + 0x21] = 25; // level
+		writeWord(overrides, base + 0x01, 50); // HP
+		writeWord(overrides, base + 0x22, 80); // max HP
+		writeWord(overrides, base + 0x24, 55); // attack
+		writeWord(overrides, base + 0x26, 40); // defense
+		writeWord(overrides, base + 0x28, 90); // speed
+		writeWord(overrides, base + 0x2a, 50); // special
+		overrides[base + 0x05] = 0x17; // Electric
+		overrides[base + 0x06] = 0x17;
+		overrides[base + 0x08] = 0x55; // Thunder move
+		overrides[base + 0x1d] = 10; // PP
+
+		const ram = makeOverworldRam(overrides);
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.party).toHaveLength(1);
+		expect(state.party[0]?.species).toBe('Pikachu');
+		expect(state.party[0]?.level).toBe(25);
+	});
+
+	// ─── Inventory ───────────────────────────────────────────────────────────
+
+	it('always populates inventory', () => {
+		const ram = makeOverworldRam({
+			[OVERWORLD_NUM_BAG_ITEMS]: 2,
+			[OVERWORLD_BAG_ITEMS]: 0x13, // Potion
+			[OVERWORLD_BAG_ITEMS + 1]: 3,
+			[OVERWORLD_BAG_ITEMS + 2]: 0x01, // Master Ball
+			[OVERWORLD_BAG_ITEMS + 3]: 1,
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.inventory).toHaveLength(2);
+		expect(state.inventory[0]?.name).toBe('Potion');
+		expect(state.inventory[0]?.quantity).toBe(3);
+	});
+
+	// ─── Overworld Phase ─────────────────────────────────────────────────────
+
+	it('returns overworld populated and battle null in overworld', () => {
+		const ram = makeOverworldRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle).toBeNull();
+		expect(state.overworld).not.toBeNull();
+	});
+
+	it('overworld contains tile in front, HM availability, wild encounter rate', () => {
+		const ram = makeOverworldRam({ [ADDR_GRASS_RATE]: 25 });
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.overworld).not.toBeNull();
+		expect(state.overworld?.tileInFront).toHaveProperty('tileId');
+		expect(state.overworld?.tileInFront).toHaveProperty('description');
+		expect(state.overworld?.hmAvailable).toHaveProperty('cut');
+		expect(state.overworld?.hmAvailable).toHaveProperty('fly');
+		expect(state.overworld?.hmAvailable).toHaveProperty('surf');
+		expect(state.overworld?.hmAvailable).toHaveProperty('strength');
+		expect(state.overworld?.hmAvailable).toHaveProperty('flash');
+		expect(state.overworld?.wildEncounterRate).toBe(25);
+	});
+
+	// ─── Wild Battle Phase ───────────────────────────────────────────────────
+
+	it('returns battle populated and overworld null in wild battle', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle).not.toBeNull();
+		expect(state.overworld).toBeNull();
+	});
+
+	it('wild battle has type "wild"', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.type).toBe('wild');
+	});
+
+	it('wild battle includes turn count', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.turnCount).toBe(3);
+	});
+
+	it('wild battle includes player active Pokemon with battle stats', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.playerActive).toBeDefined();
+		expect(state.battle?.playerActive.species).toBe('Pikachu');
+		expect(state.battle?.playerActive.battleStats).toBeDefined();
+		expect(state.battle?.playerActive.battleStats.attack).toBe(55);
+		expect(state.battle?.playerActive.battleStats.defense).toBe(40);
+		expect(state.battle?.playerActive.battleStats.speed).toBe(90);
+		expect(state.battle?.playerActive.battleStats.special).toBe(50);
+	});
+
+	it('wild battle includes opponent with battle stats and moves', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.opponent).toBeDefined();
+		expect(state.battle?.opponent.battleStats.attack).toBe(30);
+		expect(state.battle?.opponent.knownMoves.length).toBeGreaterThan(0);
+		expect(state.battle?.opponent.knownMoves[0]?.name).toBe('Tackle');
+	});
+
+	it('wild battle includes move effectiveness', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.moveEffectiveness).toBeDefined();
+		expect(state.battle?.moveEffectiveness.length).toBeGreaterThan(0);
+		const entry = state.battle?.moveEffectiveness[0];
+		expect(entry).toHaveProperty('moveName');
+		expect(entry).toHaveProperty('moveType');
+		expect(entry).toHaveProperty('effectiveness');
+	});
+
+	it('wild battle includes neutral stat modifiers', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.statModifiers.player.attack).toBe(7);
+		expect(state.battle?.statModifiers.player.defense).toBe(7);
+		expect(state.battle?.statModifiers.enemy.attack).toBe(7);
+	});
+
+	it('wild battle includes non-neutral stat modifiers', () => {
+		const ram = makeWildBattleRam({
+			[ADDR_PLAYER_ATTACK_MOD]: 9, // +2 stages
+			[ADDR_ENEMY_DEFENSE_MOD]: 5, // -2 stages
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.statModifiers.player.attack).toBe(9);
+		expect(state.battle?.statModifiers.enemy.defense).toBe(5);
+	});
+
+	it('wild battle includes empty battle status flags', () => {
+		const ram = makeWildBattleRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.battleStatus.playerFlags).toEqual([]);
+		expect(state.battle?.battleStatus.enemyFlags).toEqual([]);
+	});
+
+	it('wild battle includes active battle status flags', () => {
+		const ram = makeWildBattleRam({
+			[ADDR_PLAYER_BATTLE_STATUS2]: 0x08, // substitute
+			[ADDR_ENEMY_BATTLE_STATUS3]: 0x01, // confused
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.battleStatus.playerFlags).toContain('substitute');
+		expect(state.battle?.battleStatus.enemyFlags).toContain('confused');
+	});
+
+	it('wild battle includes substitute HP', () => {
+		const ram = makeWildBattleRam({
+			[ADDR_PLAYER_SUBSTITUTE_HP]: 25,
+			[ADDR_ENEMY_SUBSTITUTE_HP]: 0,
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.substituteHP.player).toBe(25);
+		expect(state.battle?.substituteHP.enemy).toBe(0);
+	});
+
+	// ─── Trainer Battle Phase ────────────────────────────────────────────────
+
+	it('trainer battle has type "trainer"', () => {
+		const ram = makeWildBattleRam({ [ADDR_BATTLE_TYPE]: 2 });
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.type).toBe('trainer');
+	});
+
+	it('trainer battle includes trainer class and party count', () => {
+		const ram = makeWildBattleRam({
+			[ADDR_BATTLE_TYPE]: 2,
+			[ADDR_TRAINER_CLASS]: 42,
+			[ADDR_ENEMY_PARTY_COUNT]: 3,
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.battle?.opponent.trainerClass).toBe(42);
+		expect(state.battle?.opponent.partyCount).toBe(3);
+	});
+
+	// ─── Screen State ────────────────────────────────────────────────────────
+
+	it('always populates screen state', () => {
+		const ram = makeOverworldRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.screen).toBeDefined();
+		expect(typeof state.screen.textBoxActive).toBe('boolean');
+		expect(state.screen.textBoxActive).toBe(false);
+		expect(state.screen.menuState).toBeNull();
+		expect(state.screen.menuText).toBeNull();
+		expect(state.screen.screenText).toBeNull();
+	});
+
+	// ─── Progress ────────────────────────────────────────────────────────────
+
+	it('always populates progress', () => {
+		const ram = makeOverworldRam({
+			[ADDR_PLAY_TIME_HOURS_HIGH]: 0x00,
+			[ADDR_PLAY_TIME_HOURS_LOW]: 10,
+			[ADDR_PLAY_TIME_MINUTES]: 30,
+			[ADDR_PLAY_TIME_SECONDS]: 15,
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.progress.playTimeHours).toBe(10);
+		expect(state.progress.playTimeMinutes).toBe(30);
+		expect(state.progress.playTimeSeconds).toBe(15);
+	});
+
+	it('includes pokedex counts in progress', () => {
+		const ram = makeOverworldRam({
+			[ADDR_POKEDEX_OWNED_START]: 0xff, // 8 owned
+			[ADDR_POKEDEX_SEEN_START]: 0x0f, // 4 seen
+		});
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.progress.pokedexOwned).toBe(8);
+		expect(state.progress.pokedexSeen).toBe(4);
+	});
+
+	// ─── Graceful Defaults ───────────────────────────────────────────────────
+
+	it('does not throw on completely zeroed RAM', () => {
+		const ram = makeRam();
+		expect(() => extractUnifiedGameState(ram, 'g', 0)).not.toThrow();
+	});
+
+	it('returns sensible defaults on zeroed RAM', () => {
+		const ram = makeRam();
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.phase).toBe(GamePhase.Overworld);
+		expect(state.battle).toBeNull();
+		expect(state.overworld).not.toBeNull();
+		expect(state.player.name).toBe('PLAYER');
+		expect(state.player.money).toBe(0);
+		expect(state.player.badges).toBe(0);
+		expect(state.player.badgeList).toEqual([]);
+		expect(state.party).toEqual([]);
+		expect(state.inventory).toEqual([]);
+		expect(state.progress.playTimeHours).toBe(0);
+	});
+
+	// ─── Phase Detection Integration ────────────────────────────────────────
+
+	it('detects Dialogue phase via text delay flags', () => {
+		const ram = makeOverworldRam({ [OVERWORLD_TEXT_DELAY_FLAGS]: 1 });
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.phase).toBe(GamePhase.Dialogue);
+		// Still in overworld (not in battle), so overworld should be populated
+		expect(state.overworld).not.toBeNull();
+		expect(state.battle).toBeNull();
+	});
+
+	it('detects Cutscene phase via joy ignore without text', () => {
+		const ram = makeOverworldRam({ [OVERWORLD_JOY_IGNORE]: 0xff });
+		const state = extractUnifiedGameState(ram, 'g', 0);
+		expect(state.phase).toBe(GamePhase.Cutscene);
+		expect(state.overworld).not.toBeNull();
+		expect(state.battle).toBeNull();
 	});
 });
