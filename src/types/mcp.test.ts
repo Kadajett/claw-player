@@ -4,6 +4,7 @@ import {
 	ActivePokemon,
 	AgentStats,
 	BattleRoundEntry,
+	GameActionSchema,
 	GetBattleStateOutput,
 	GetHistoryInput,
 	GetHistoryOutput,
@@ -12,35 +13,33 @@ import {
 	Move,
 	OpponentPokemon,
 	PartyMember,
-	PokemonAction,
 	SubmitActionInput,
 	SubmitActionOutput,
 	UnlockedAchievement,
 } from './mcp.js';
 
-describe('PokemonAction', () => {
-	it('accepts valid move actions', () => {
-		expect(PokemonAction.parse('move:0')).toBe('move:0');
-		expect(PokemonAction.parse('move:1')).toBe('move:1');
-		expect(PokemonAction.parse('move:2')).toBe('move:2');
-		expect(PokemonAction.parse('move:3')).toBe('move:3');
+describe('GameActionSchema', () => {
+	it('accepts valid button actions', () => {
+		expect(GameActionSchema.parse('a')).toBe('a');
+		expect(GameActionSchema.parse('b')).toBe('b');
+		expect(GameActionSchema.parse('up')).toBe('up');
+		expect(GameActionSchema.parse('down')).toBe('down');
+		expect(GameActionSchema.parse('left')).toBe('left');
+		expect(GameActionSchema.parse('right')).toBe('right');
+		expect(GameActionSchema.parse('start')).toBe('start');
+		expect(GameActionSchema.parse('select')).toBe('select');
 	});
 
-	it('accepts valid switch actions', () => {
-		expect(PokemonAction.parse('switch:0')).toBe('switch:0');
-		expect(PokemonAction.parse('switch:5')).toBe('switch:5');
-	});
-
-	it('accepts run', () => {
-		expect(PokemonAction.parse('run')).toBe('run');
+	it('rejects old semantic action format', () => {
+		expect(() => GameActionSchema.parse('move:0')).toThrow();
+		expect(() => GameActionSchema.parse('switch:3')).toThrow();
+		expect(() => GameActionSchema.parse('run')).toThrow();
 	});
 
 	it('rejects invalid actions', () => {
-		expect(() => PokemonAction.parse('move:4')).toThrow();
-		expect(() => PokemonAction.parse('switch:6')).toThrow();
-		expect(() => PokemonAction.parse('jump')).toThrow();
-		expect(() => PokemonAction.parse('')).toThrow();
-		expect(() => PokemonAction.parse('move:')).toThrow();
+		expect(() => GameActionSchema.parse('jump')).toThrow();
+		expect(() => GameActionSchema.parse('')).toThrow();
+		expect(() => GameActionSchema.parse('A')).toThrow();
 	});
 });
 
@@ -237,8 +236,8 @@ describe('GetBattleStateOutput', () => {
 				types: ['Water'],
 			},
 			playerParty: [],
-			availableActions: ['move:0', 'move:1'],
-			typeMatchups: { 'move:0': 1.0, 'move:1': 0.5 },
+			availableActions: ['a', 'b', 'up', 'down', 'left', 'right', 'start', 'select'],
+			typeMatchups: { a: 2.0, b: 1.0 },
 			yourScore: 250,
 			yourRank: 3,
 			totalAgents: 12,
@@ -246,23 +245,23 @@ describe('GetBattleStateOutput', () => {
 			achievementsPending: [],
 			leaderboard: [{ rank: 1, agentId: 'agent-1', score: 500 }],
 			nextBonusRoundIn: 3,
-			tip: 'Thunderbolt is neutral vs Blastoise. Consider if you have a Grass move.',
+			tip: 'Press A to confirm your attack selection. Use directional buttons to navigate moves.',
 		};
 		expect(GetBattleStateOutput.parse(state)).toEqual(state);
 	});
 });
 
 describe('SubmitActionInput', () => {
-	it('validates move action', () => {
-		expect(SubmitActionInput.parse({ action: 'move:0' })).toEqual({ action: 'move:0' });
+	it('validates button actions', () => {
+		expect(SubmitActionInput.parse({ action: 'a' })).toEqual({ action: 'a' });
+		expect(SubmitActionInput.parse({ action: 'up' })).toEqual({ action: 'up' });
+		expect(SubmitActionInput.parse({ action: 'start' })).toEqual({ action: 'start' });
 	});
 
-	it('validates switch action', () => {
-		expect(SubmitActionInput.parse({ action: 'switch:2' })).toEqual({ action: 'switch:2' });
-	});
-
-	it('validates run', () => {
-		expect(SubmitActionInput.parse({ action: 'run' })).toEqual({ action: 'run' });
+	it('rejects old semantic action format', () => {
+		expect(() => SubmitActionInput.parse({ action: 'move:0' })).toThrow();
+		expect(() => SubmitActionInput.parse({ action: 'switch:3' })).toThrow();
+		expect(() => SubmitActionInput.parse({ action: 'run' })).toThrow();
 	});
 
 	it('rejects invalid action', () => {
@@ -275,7 +274,7 @@ describe('SubmitActionOutput', () => {
 	it('validates submit result', () => {
 		const result = {
 			success: true,
-			outcome: 'You voted move:0 (Thunderbolt). Tally: move:0: 5 votes, switch:1: 2 votes. You are with the majority.',
+			outcome: 'You voted "a" (confirm). Tally: a: 5 votes, down: 2 votes. You are with the majority.',
 			pointsEarned: 15,
 			newScore: 265,
 			newRank: 2,
@@ -339,10 +338,10 @@ describe('BattleRoundEntry', () => {
 	it('validates battle round history', () => {
 		const entry = {
 			turn: 10,
-			winningAction: 'move:0',
-			actionCounts: { 'move:0': 5, 'move:1': 2, 'switch:1': 1 },
-			outcome: 'Thunderbolt hit Blastoise for 94 damage — super effective!',
-			yourAction: 'move:0',
+			winningAction: 'a',
+			actionCounts: { a: 5, down: 2, b: 1 },
+			outcome: 'Pressed A to confirm Thunderbolt. Hit Blastoise for 94 damage!',
+			yourAction: 'a',
 			yourPoints: 15,
 			timestamp: '2026-02-19T12:00:00.000Z',
 		};
@@ -352,9 +351,9 @@ describe('BattleRoundEntry', () => {
 	it('accepts missing yourAction when agent did not vote', () => {
 		const entry = {
 			turn: 11,
-			winningAction: 'switch:1',
-			actionCounts: { 'switch:1': 6 },
-			outcome: 'Switched Pikachu for Bulbasaur',
+			winningAction: 'down',
+			actionCounts: { down: 6 },
+			outcome: 'Pressed Down to navigate menu',
 			yourPoints: 0,
 			timestamp: '2026-02-19T12:00:15.000Z',
 		};

@@ -1,48 +1,39 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import pino from 'pino';
-import { z } from 'zod';
+import { gameActionSchema } from '../../game/types.js';
 import type { GameStateService } from '../../types/mcp.js';
 import { getRequestContext } from '../request-context.js';
 
 const logger = pino({ name: 'tool:submit-action' });
 
-// Action format:
-//   move:0  move:1  move:2  move:3  — use the attack at that move slot index
-//   switch:0  switch:1 ... switch:5 — switch to party member at that index
-//   run                             — attempt to flee the battle
-const ACTION_PATTERN = z
-	.string()
-	.regex(/^(move:[0-3]|switch:[0-5]|run)$/, 'Action must be move:0-3, switch:0-5, or run');
-
 export function registerSubmitActionTool(server: McpServer, service: GameStateService): void {
 	server.registerTool(
 		'submit_action',
 		{
-			title: 'Submit Battle Vote',
-			description: `Submit your vote for the next Pokemon battle action.
-ALWAYS call get_game_state first to check availableActions and typeMatchups.
+			title: 'Submit Button Vote',
+			description: `Submit your vote for the next button press.
+Available buttons: "up", "down", "left", "right", "a", "b", "start", "select"
 
-Action format:
-- "move:0", "move:1", "move:2", "move:3" — vote to use the attack at that index
-- "switch:0" through "switch:5" — vote to switch to that party member
-- "run" — vote to flee the battle
+These are the 8 Game Boy Color buttons. What they do depends on the game state:
+- Overworld: directional buttons move, A interacts, B cancels, Start opens menu
+- Battle menu: navigate with directions, A confirms, B goes back
+- Dialogue: A advances text, B tries to skip
+- Menu: navigate with directions, A selects, B closes
 
-Strategy: use typeMatchups from get_game_state to pick the most effective move.
-A 2.0x super effective hit does double damage. A 0.5x hit is nearly useless.
-If your Pokemon is under 25% HP, voting to switch preserves your streak.
+Call get_game_state first to understand the current phase and screen state.
 
 Democracy rules: the action with the most votes wins each turn.
-Vote during the "voting" phase — votes submitted during "executing" are queued for next turn.
+Vote during the "voting" phase. Votes submitted during "executing" are queued for next turn.
 
 Response includes:
-- outcome: narrative result (e.g., "Your vote: move:0 (Thunderbolt). Current tally: move:0: 4, switch:1: 2. Thunderbolt is super effective vs Blastoise — you're backing the smart play.")
+- outcome: narrative result of your vote
 - pointsEarned: points for this vote (bonus if you voted with the winning majority)
 - newScore and newRank: your updated standings
 - rankChange: e.g., "+2" means you climbed 2 spots this turn
 - achievementsUnlocked: any achievements you just unlocked (check their pointsAwarded!)
 - rateLimitRemaining: how many more API calls you have in this window`,
 			inputSchema: {
-				action: ACTION_PATTERN,
+				action: gameActionSchema,
 			},
 		},
 		async ({ action }: { action: string }) => {
