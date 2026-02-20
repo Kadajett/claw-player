@@ -9,15 +9,40 @@ import {
 	ADDR_PLAYER_LEVEL,
 	ADDR_PLAYER_SPECIES,
 	buildAvailableActions,
+	decodeBadgeNames,
+	decodeDirection,
+	decodeMapName,
+	decodePokemonText,
 	decodeStatus,
 	decodeType,
 	decodeTypes,
+	detectGamePhase,
 	extractBattleState,
 	extractOpponentPokemon,
+	extractOverworldState,
 	extractPlayerPokemon,
 	isInBattle,
+	OVERWORLD_BADGES,
+	OVERWORLD_BAG_ITEMS,
+	OVERWORLD_CUR_MAP,
+	OVERWORLD_JOY_IGNORE,
+	OVERWORLD_NUM_BAG_ITEMS,
+	OVERWORLD_PLAYER_DIR,
+	OVERWORLD_PLAYER_MONEY,
+	OVERWORLD_PLAYER_NAME_ADDR,
+	OVERWORLD_SPRITE_DATA1_START,
+	OVERWORLD_SPRITE_DATA2_START,
+	OVERWORLD_SPRITE_ENTRY_SIZE,
+	OVERWORLD_TEXT_DELAY_FLAGS,
+	OVERWORLD_X_COORD,
+	OVERWORLD_Y_COORD,
+	readBadges,
+	readInventory,
+	readMoney,
+	readNearbySprites,
+	readPlayerName,
 } from './memory-map.js';
-import { PokemonType, StatusCondition } from './types.js';
+import { GamePhase, PokemonType, StatusCondition } from './types.js';
 
 function makeRam(overrides?: Record<number, number>): ReadonlyArray<number> {
 	const ram = new Array(65536).fill(0) as Array<number>;
@@ -224,5 +249,509 @@ describe('extractBattleState', () => {
 		expect(state.playerActive).toBeDefined();
 		expect(state.opponent).toBeDefined();
 		expect(state.availableActions.length).toBeGreaterThan(0);
+	});
+});
+
+// ─── Overworld Memory Map Tests ──────────────────────────────────────────────
+
+// Test address for generic text decoding tests
+const TEST_ADDR = 0x1000;
+
+describe('decodePokemonText', () => {
+	it('decodes uppercase letters A-Z', () => {
+		// "RED" = 0x91 (R), 0x84 (E), 0x83 (D), 0x50 (terminator)
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x91,
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x84,
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x83,
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x50,
+		});
+		expect(decodePokemonText(ram, OVERWORLD_PLAYER_NAME_ADDR, 11)).toBe('RED');
+	});
+
+	it('stops at terminator 0x50', () => {
+		const ram = makeRam({
+			[TEST_ADDR]: 0x80, // A
+			[TEST_ADDR + 1]: 0x81, // B
+			[TEST_ADDR + 2]: 0x50, // terminator
+			[TEST_ADDR + 3]: 0x82, // C (should not be included)
+		});
+		expect(decodePokemonText(ram, TEST_ADDR, 11)).toBe('AB');
+	});
+
+	it('stops at maxLen even without terminator', () => {
+		const ram = makeRam({
+			[TEST_ADDR]: 0x80, // A
+			[TEST_ADDR + 1]: 0x81, // B
+			[TEST_ADDR + 2]: 0x82, // C
+		});
+		expect(decodePokemonText(ram, TEST_ADDR, 2)).toBe('AB');
+	});
+
+	it('decodes digits 0-9', () => {
+		const ram = makeRam({
+			[TEST_ADDR]: 0xf7, // 1
+			[TEST_ADDR + 1]: 0xf8, // 2
+			[TEST_ADDR + 2]: 0xf9, // 3
+			[TEST_ADDR + 3]: 0x50,
+		});
+		expect(decodePokemonText(ram, TEST_ADDR, 11)).toBe('123');
+	});
+
+	it('decodes lowercase letters', () => {
+		const ram = makeRam({
+			[TEST_ADDR]: 0xa0, // a
+			[TEST_ADDR + 1]: 0xa1, // b
+			[TEST_ADDR + 2]: 0xa2, // c
+			[TEST_ADDR + 3]: 0x50,
+		});
+		expect(decodePokemonText(ram, TEST_ADDR, 11)).toBe('abc');
+	});
+
+	it('returns empty string for immediate terminator', () => {
+		const ram = makeRam({ [TEST_ADDR]: 0x50 });
+		expect(decodePokemonText(ram, TEST_ADDR, 11)).toBe('');
+	});
+
+	it('skips unmapped bytes', () => {
+		const ram = makeRam({
+			[TEST_ADDR]: 0x80, // A
+			[TEST_ADDR + 1]: 0x01, // unmapped
+			[TEST_ADDR + 2]: 0x81, // B
+			[TEST_ADDR + 3]: 0x50,
+		});
+		expect(decodePokemonText(ram, TEST_ADDR, 11)).toBe('AB');
+	});
+});
+
+describe('decodeDirection', () => {
+	it('decodes down (0x00)', () => {
+		expect(decodeDirection(0x00)).toBe('down');
+	});
+
+	it('decodes up (0x04)', () => {
+		expect(decodeDirection(0x04)).toBe('up');
+	});
+
+	it('decodes left (0x08)', () => {
+		expect(decodeDirection(0x08)).toBe('left');
+	});
+
+	it('decodes right (0x0C)', () => {
+		expect(decodeDirection(0x0c)).toBe('right');
+	});
+
+	it('masks out non-direction bits', () => {
+		// 0xF0 has bits 2-3 = 0, so direction = down
+		expect(decodeDirection(0xf0)).toBe('down');
+		// 0xF4 has bits 2-3 = 01, so direction = up
+		expect(decodeDirection(0xf4)).toBe('up');
+	});
+});
+
+describe('decodeMapName', () => {
+	it('returns Pallet Town for map ID 0', () => {
+		expect(decodeMapName(0x00)).toBe('Pallet Town');
+	});
+
+	it('returns Route 1 for map ID 0x0C', () => {
+		expect(decodeMapName(0x0c)).toBe('Route 1');
+	});
+
+	it('returns fallback for unknown map ID', () => {
+		expect(decodeMapName(0xfe)).toBe('Map 254');
+	});
+});
+
+describe('decodeBadgeNames', () => {
+	it('returns empty array for 0 badges', () => {
+		expect(decodeBadgeNames(0x00)).toHaveLength(0);
+	});
+
+	it('returns Boulder Badge for bit 0', () => {
+		const badges = decodeBadgeNames(0x01);
+		expect(badges).toEqual(['Boulder Badge']);
+	});
+
+	it('returns all 8 badges for 0xFF', () => {
+		const badges = decodeBadgeNames(0xff);
+		expect(badges).toHaveLength(8);
+		expect(badges[0]).toBe('Boulder Badge');
+		expect(badges[7]).toBe('Earth Badge');
+	});
+
+	it('returns correct badges for mixed bits', () => {
+		// Bit 0 (Boulder) + bit 2 (Thunder) = 0x05
+		const badges = decodeBadgeNames(0x05);
+		expect(badges).toEqual(['Boulder Badge', 'Thunder Badge']);
+	});
+});
+
+describe('readPlayerName', () => {
+	it('reads encoded name from RAM', () => {
+		// "ASH" = 0x80, 0x92, 0x87, 0x50
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x80,
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x92,
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x87,
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x50,
+		});
+		expect(readPlayerName(ram)).toBe('ASH');
+	});
+
+	it('returns PLAYER as fallback for empty name', () => {
+		const ram = makeRam({ [OVERWORLD_PLAYER_NAME_ADDR]: 0x50 });
+		expect(readPlayerName(ram)).toBe('PLAYER');
+	});
+
+	it('reads full 7-character name', () => {
+		// "TRAINER" = T(0x93) R(0x91) A(0x80) I(0x88) N(0x8d) E(0x84) R(0x91)
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x93,
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x91,
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x80,
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x88,
+			[OVERWORLD_PLAYER_NAME_ADDR + 4]: 0x8d,
+			[OVERWORLD_PLAYER_NAME_ADDR + 5]: 0x84,
+			[OVERWORLD_PLAYER_NAME_ADDR + 6]: 0x91,
+			[OVERWORLD_PLAYER_NAME_ADDR + 7]: 0x50,
+		});
+		expect(readPlayerName(ram)).toBe('TRAINER');
+	});
+});
+
+describe('readMoney', () => {
+	it('reads BCD-encoded money from 3 bytes', () => {
+		// $1234 = 0x00, 0x12, 0x34
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_MONEY]: 0x00,
+			[OVERWORLD_PLAYER_MONEY + 1]: 0x12,
+			[OVERWORLD_PLAYER_MONEY + 2]: 0x34,
+		});
+		expect(readMoney(ram)).toBe(1234);
+	});
+
+	it('reads max money (999999)', () => {
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_MONEY]: 0x99,
+			[OVERWORLD_PLAYER_MONEY + 1]: 0x99,
+			[OVERWORLD_PLAYER_MONEY + 2]: 0x99,
+		});
+		expect(readMoney(ram)).toBe(999999);
+	});
+
+	it('reads zero money', () => {
+		const ram = makeRam();
+		expect(readMoney(ram)).toBe(0);
+	});
+
+	it('reads small amount correctly', () => {
+		// $500 = 0x00, 0x05, 0x00
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_MONEY]: 0x00,
+			[OVERWORLD_PLAYER_MONEY + 1]: 0x05,
+			[OVERWORLD_PLAYER_MONEY + 2]: 0x00,
+		});
+		expect(readMoney(ram)).toBe(500);
+	});
+});
+
+describe('readBadges', () => {
+	it('returns 0 for no badges', () => {
+		const ram = makeRam();
+		expect(readBadges(ram)).toBe(0);
+	});
+
+	it('returns 1 for single badge', () => {
+		const ram = makeRam({ [OVERWORLD_BADGES]: 0x01 });
+		expect(readBadges(ram)).toBe(1);
+	});
+
+	it('returns 8 for all badges', () => {
+		const ram = makeRam({ [OVERWORLD_BADGES]: 0xff });
+		expect(readBadges(ram)).toBe(8);
+	});
+
+	it('counts non-contiguous badges correctly', () => {
+		// Bits 0, 2, 5 = Boulder, Thunder, Marsh = 3 badges
+		const ram = makeRam({ [OVERWORLD_BADGES]: 0x25 });
+		expect(readBadges(ram)).toBe(3);
+	});
+});
+
+describe('readInventory', () => {
+	it('returns empty array when count is 0', () => {
+		const ram = makeRam();
+		expect(readInventory(ram)).toEqual([]);
+	});
+
+	it('reads single item', () => {
+		const ram = makeRam({
+			[OVERWORLD_NUM_BAG_ITEMS]: 1,
+			[OVERWORLD_BAG_ITEMS]: 0x13, // Potion
+			[OVERWORLD_BAG_ITEMS + 1]: 5, // quantity
+		});
+		const items = readInventory(ram);
+		expect(items).toHaveLength(1);
+		expect(items[0]?.itemId).toBe(0x13);
+		expect(items[0]?.name).toBe('Potion');
+		expect(items[0]?.quantity).toBe(5);
+	});
+
+	it('reads multiple items', () => {
+		const ram = makeRam({
+			[OVERWORLD_NUM_BAG_ITEMS]: 3,
+			[OVERWORLD_BAG_ITEMS]: 0x04, // Poke Ball
+			[OVERWORLD_BAG_ITEMS + 1]: 10,
+			[OVERWORLD_BAG_ITEMS + 2]: 0x13, // Potion
+			[OVERWORLD_BAG_ITEMS + 3]: 3,
+			[OVERWORLD_BAG_ITEMS + 4]: 0x0a, // Antidote
+			[OVERWORLD_BAG_ITEMS + 5]: 1,
+		});
+		const items = readInventory(ram);
+		expect(items).toHaveLength(3);
+		expect(items[0]?.name).toBe('Poke Ball');
+		expect(items[1]?.name).toBe('Potion');
+		expect(items[2]?.name).toBe('Antidote');
+	});
+
+	it('stops at 0xFF terminator', () => {
+		const ram = makeRam({
+			[OVERWORLD_NUM_BAG_ITEMS]: 5,
+			[OVERWORLD_BAG_ITEMS]: 0x13, // Potion
+			[OVERWORLD_BAG_ITEMS + 1]: 2,
+			[OVERWORLD_BAG_ITEMS + 2]: 0xff, // terminator
+			[OVERWORLD_BAG_ITEMS + 3]: 99,
+		});
+		const items = readInventory(ram);
+		expect(items).toHaveLength(1);
+	});
+
+	it('caps at max bag size', () => {
+		const overrides: Record<number, number> = { [OVERWORLD_NUM_BAG_ITEMS]: 100 };
+		for (let i = 0; i < 25; i++) {
+			overrides[OVERWORLD_BAG_ITEMS + i * 2] = 0x13;
+			overrides[OVERWORLD_BAG_ITEMS + i * 2 + 1] = 1;
+		}
+		const ram = makeRam(overrides);
+		const items = readInventory(ram);
+		expect(items.length).toBeLessThanOrEqual(20);
+	});
+
+	it('uses fallback name for unknown items', () => {
+		const ram = makeRam({
+			[OVERWORLD_NUM_BAG_ITEMS]: 1,
+			[OVERWORLD_BAG_ITEMS]: 0xaa, // unknown
+			[OVERWORLD_BAG_ITEMS + 1]: 1,
+		});
+		const items = readInventory(ram);
+		expect(items[0]?.name).toBe('Item #170');
+	});
+});
+
+describe('readNearbySprites', () => {
+	it('returns empty array when no sprites are present', () => {
+		const ram = makeRam();
+		expect(readNearbySprites(ram)).toEqual([]);
+	});
+
+	it('reads a single NPC sprite', () => {
+		const spriteIdx = 1;
+		const data1Base = OVERWORLD_SPRITE_DATA1_START + spriteIdx * OVERWORLD_SPRITE_ENTRY_SIZE;
+		const data2Base = OVERWORLD_SPRITE_DATA2_START + spriteIdx * OVERWORLD_SPRITE_ENTRY_SIZE;
+		const ram = makeRam({
+			[data1Base]: 5, // picture ID (non-zero = present)
+			[data1Base + 1]: 0, // movement status (still)
+			[data2Base + 4]: 10, // map Y
+			[data2Base + 5]: 15, // map X
+		});
+		const sprites = readNearbySprites(ram);
+		expect(sprites).toHaveLength(1);
+		expect(sprites[0]?.id).toBe(1);
+		expect(sprites[0]?.x).toBe(15);
+		expect(sprites[0]?.y).toBe(10);
+		expect(sprites[0]?.canTalk).toBe(true);
+	});
+
+	it('skips sprite 0 (player)', () => {
+		// Set player sprite (index 0) with a picture ID
+		const ram = makeRam({
+			[OVERWORLD_SPRITE_DATA1_START]: 1, // player picture ID
+		});
+		const sprites = readNearbySprites(ram);
+		expect(sprites).toHaveLength(0); // player should be excluded
+	});
+
+	it('marks moving sprites as not talkable', () => {
+		const spriteIdx = 2;
+		const data1Base = OVERWORLD_SPRITE_DATA1_START + spriteIdx * OVERWORLD_SPRITE_ENTRY_SIZE;
+		const data2Base = OVERWORLD_SPRITE_DATA2_START + spriteIdx * OVERWORLD_SPRITE_ENTRY_SIZE;
+		const ram = makeRam({
+			[data1Base]: 3, // picture ID
+			[data1Base + 1]: 2, // movement status = moving
+			[data2Base + 4]: 5,
+			[data2Base + 5]: 7,
+		});
+		const sprites = readNearbySprites(ram);
+		expect(sprites[0]?.canTalk).toBe(false);
+	});
+
+	it('reads multiple sprites', () => {
+		const overrides: Record<number, number> = {};
+		for (const idx of [1, 3, 5]) {
+			const d1 = OVERWORLD_SPRITE_DATA1_START + idx * OVERWORLD_SPRITE_ENTRY_SIZE;
+			const d2 = OVERWORLD_SPRITE_DATA2_START + idx * OVERWORLD_SPRITE_ENTRY_SIZE;
+			overrides[d1] = idx + 10; // picture ID
+			overrides[d2 + 4] = idx; // Y
+			overrides[d2 + 5] = idx * 2; // X
+		}
+		const ram = makeRam(overrides);
+		const sprites = readNearbySprites(ram);
+		expect(sprites).toHaveLength(3);
+	});
+});
+
+describe('detectGamePhase', () => {
+	it('returns Overworld when no flags are set', () => {
+		const ram = makeRam();
+		expect(detectGamePhase(ram)).toBe(GamePhase.Overworld);
+	});
+
+	it('returns Battle when battle type is set', () => {
+		const ram = makeRam({ [ADDR_BATTLE_TYPE]: 1 });
+		expect(detectGamePhase(ram)).toBe(GamePhase.Battle);
+	});
+
+	it('returns Battle for trainer battle', () => {
+		const ram = makeRam({ [ADDR_BATTLE_TYPE]: 2 });
+		expect(detectGamePhase(ram)).toBe(GamePhase.Battle);
+	});
+
+	it('returns Dialogue when text delay flags are set', () => {
+		const ram = makeRam({ [OVERWORLD_TEXT_DELAY_FLAGS]: 1 });
+		expect(detectGamePhase(ram)).toBe(GamePhase.Dialogue);
+	});
+
+	it('returns Cutscene when joy ignore is set', () => {
+		const ram = makeRam({ [OVERWORLD_JOY_IGNORE]: 0xff });
+		expect(detectGamePhase(ram)).toBe(GamePhase.Cutscene);
+	});
+
+	it('prioritizes Battle over Dialogue', () => {
+		const ram = makeRam({
+			[ADDR_BATTLE_TYPE]: 1,
+			[OVERWORLD_TEXT_DELAY_FLAGS]: 1,
+		});
+		expect(detectGamePhase(ram)).toBe(GamePhase.Battle);
+	});
+
+	it('prioritizes Dialogue over Cutscene', () => {
+		const ram = makeRam({
+			[OVERWORLD_TEXT_DELAY_FLAGS]: 1,
+			[OVERWORLD_JOY_IGNORE]: 1,
+		});
+		expect(detectGamePhase(ram)).toBe(GamePhase.Dialogue);
+	});
+});
+
+describe('extractOverworldState', () => {
+	it('returns valid OverworldState shape', () => {
+		const ram = makeRam({
+			[OVERWORLD_CUR_MAP]: 0x00, // Pallet Town
+			[OVERWORLD_X_COORD]: 5,
+			[OVERWORLD_Y_COORD]: 3,
+			[OVERWORLD_PLAYER_DIR]: 0x04, // facing up
+		});
+		const state = extractOverworldState(ram);
+		expect(state.location.mapId).toBe(0);
+		expect(state.location.mapName).toBe('Pallet Town');
+		expect(state.location.x).toBe(5);
+		expect(state.location.y).toBe(3);
+		expect(state.playerDirection).toBe('up');
+		expect(state.gamePhase).toBe(GamePhase.Overworld);
+	});
+
+	it('detects outdoor maps correctly', () => {
+		// Pallet Town is outdoor
+		const ram = makeRam({ [OVERWORLD_CUR_MAP]: 0x00 });
+		expect(extractOverworldState(ram).inBuilding).toBe(false);
+
+		// Route 1 is outdoor
+		const ram2 = makeRam({ [OVERWORLD_CUR_MAP]: 0x0c });
+		expect(extractOverworldState(ram2).inBuilding).toBe(false);
+	});
+
+	it('detects indoor maps correctly', () => {
+		// Red's House 1F is indoor
+		const ram = makeRam({ [OVERWORLD_CUR_MAP]: 0x25 });
+		expect(extractOverworldState(ram).inBuilding).toBe(true);
+
+		// Prof. Oak's Lab is indoor
+		const ram2 = makeRam({ [OVERWORLD_CUR_MAP]: 0x28 });
+		expect(extractOverworldState(ram2).inBuilding).toBe(true);
+	});
+
+	it('sets canMove to true in overworld with no joy ignore', () => {
+		const ram = makeRam();
+		expect(extractOverworldState(ram).canMove).toBe(true);
+	});
+
+	it('sets canMove to false during dialogue', () => {
+		const ram = makeRam({ [OVERWORLD_TEXT_DELAY_FLAGS]: 1 });
+		expect(extractOverworldState(ram).canMove).toBe(false);
+	});
+
+	it('sets canMove to false during battle', () => {
+		const ram = makeRam({ [ADDR_BATTLE_TYPE]: 1 });
+		expect(extractOverworldState(ram).canMove).toBe(false);
+	});
+
+	it('includes player info with name, money, badges, inventory', () => {
+		const ram = makeRam({
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x91, // R
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x84, // E
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x83, // D
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x50,
+			[OVERWORLD_PLAYER_MONEY]: 0x01,
+			[OVERWORLD_PLAYER_MONEY + 1]: 0x23,
+			[OVERWORLD_PLAYER_MONEY + 2]: 0x45,
+			[OVERWORLD_BADGES]: 0x03, // Boulder + Cascade
+			[OVERWORLD_NUM_BAG_ITEMS]: 1,
+			[OVERWORLD_BAG_ITEMS]: 0x13, // Potion
+			[OVERWORLD_BAG_ITEMS + 1]: 5,
+		});
+		const state = extractOverworldState(ram);
+		expect(state.player.name).toBe('RED');
+		expect(state.player.money).toBe(12345);
+		expect(state.player.badges).toBe(2);
+		expect(state.player.inventory).toHaveLength(1);
+		expect(state.player.inventory[0]?.name).toBe('Potion');
+	});
+
+	it('includes nearby NPCs', () => {
+		const spriteIdx = 1;
+		const d1 = OVERWORLD_SPRITE_DATA1_START + spriteIdx * OVERWORLD_SPRITE_ENTRY_SIZE;
+		const d2 = OVERWORLD_SPRITE_DATA2_START + spriteIdx * OVERWORLD_SPRITE_ENTRY_SIZE;
+		const ram = makeRam({
+			[d1]: 5,
+			[d2 + 4]: 8,
+			[d2 + 5]: 12,
+		});
+		const state = extractOverworldState(ram);
+		expect(state.nearbyNpcs).toHaveLength(1);
+		expect(state.nearbyNpcs[0]?.x).toBe(12);
+		expect(state.nearbyNpcs[0]?.y).toBe(8);
+	});
+
+	it('sets nearbyItems to empty array', () => {
+		const ram = makeRam();
+		expect(extractOverworldState(ram).nearbyItems).toEqual([]);
+	});
+
+	it('sets menuOpen and dialogueText to null', () => {
+		const ram = makeRam();
+		const state = extractOverworldState(ram);
+		expect(state.menuOpen).toBeNull();
+		expect(state.dialogueText).toBeNull();
 	});
 });
