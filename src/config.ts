@@ -13,6 +13,11 @@ const envSchema = z.object({
 	JWT_SECRET: z.string().min(32).optional(),
 	// Path to Pokemon Red ROM file - users must supply their own legally obtained copy
 	POKEMON_RED_ROM_PATH: z.string().optional(),
+	// Relay configuration
+	RELAY_MODE: z.enum(['server', 'client']).optional(),
+	RELAY_URL: z.string().url().optional(),
+	RELAY_SECRET: z.string().min(16).optional(),
+	RELAY_PORT: z.coerce.number().int().positive().default(4000),
 });
 
 export type Config = z.infer<typeof envSchema>;
