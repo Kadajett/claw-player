@@ -3,6 +3,7 @@ import { z } from 'zod';
 const envSchema = z.object({
 	NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 	PORT: z.coerce.number().int().positive().default(3000),
+	MCP_PORT: z.coerce.number().int().positive().default(3001),
 	HOST: z.string().default('0.0.0.0'),
 	REDIS_URL: z.string().url().default('redis://localhost:6379'),
 	TICK_INTERVAL_MS: z.coerce.number().int().min(1000).max(60000).default(10000),

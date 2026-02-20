@@ -1,5 +1,8 @@
 import { Redis } from 'ioredis';
 import type { RedisOptions } from 'ioredis';
+import pino from 'pino';
+
+const logger = pino({ name: 'redis-client' });
 
 const RECONNECT_MAX_ATTEMPTS = 10;
 const RECONNECT_BASE_DELAY_MS = 100;
@@ -27,12 +30,20 @@ export function createRedisClient(url: string): Redis {
 	const options = buildRedisOptions(url);
 	const client = new Redis(url, options);
 
+	client.on('connect', () => {
+		logger.info('Redis connected');
+	});
+
 	client.on('error', (err: Error) => {
-		process.stderr.write(`[redis] connection error: ${err.message}\n`);
+		logger.error({ err }, 'Redis connection error');
 	});
 
 	client.on('reconnecting', () => {
-		process.stderr.write('[redis] reconnecting...\n');
+		logger.warn('Redis reconnecting...');
+	});
+
+	client.on('close', () => {
+		logger.info('Redis connection closed');
 	});
 
 	return client;
@@ -43,7 +54,7 @@ export function createRedisSubscriber(url: string): Redis {
 	const subscriber = new Redis(url, options);
 
 	subscriber.on('error', (err: Error) => {
-		process.stderr.write(`[redis:sub] connection error: ${err.message}\n`);
+		logger.error({ err }, 'Redis subscriber connection error');
 	});
 
 	return subscriber;

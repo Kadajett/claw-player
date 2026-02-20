@@ -14,10 +14,12 @@ describe('createRedisClient', () => {
 		expect(typeof client.on).toBe('function');
 	});
 
-	it('registers error and reconnecting event handlers', () => {
+	it('registers event handlers', () => {
 		const client = createRedisClient('redis://localhost:6379');
+		expect(client.on).toHaveBeenCalledWith('connect', expect.any(Function));
 		expect(client.on).toHaveBeenCalledWith('error', expect.any(Function));
 		expect(client.on).toHaveBeenCalledWith('reconnecting', expect.any(Function));
+		expect(client.on).toHaveBeenCalledWith('close', expect.any(Function));
 	});
 });
 
