@@ -26,6 +26,9 @@ import {
 	ADDR_JOY_HELD,
 	ADDR_JOY_PRESSED,
 	ADDR_MAP_PAL_OFFSET,
+	ADDR_PARTY_COUNT,
+	ADDR_PARTY_MONS,
+	ADDR_PARTY_NICKNAMES,
 	ADDR_PLAYER_ACCURACY_MOD,
 	ADDR_PLAYER_ATTACK,
 	ADDR_PLAYER_ATTACK_MOD,
@@ -35,6 +38,7 @@ import {
 	ADDR_PLAYER_CONFUSION_COUNTER,
 	ADDR_PLAYER_DEFENSE,
 	ADDR_PLAYER_DEFENSE_MOD,
+	ADDR_PLAYER_DIRECTION,
 	ADDR_PLAYER_EVASION_MOD,
 	ADDR_PLAYER_HP_HIGH,
 	ADDR_PLAYER_LEVEL,
@@ -71,11 +75,13 @@ import {
 	OVERWORLD_Y_COORD,
 	POKEDEX_BYTES,
 	buildAvailableActions,
+	decodeBCD,
 	decodeBadgeNames,
 	decodeDirection,
 	decodeMapName,
 	decodePokemonText,
 	decodeStatus,
+	decodeStatusCondition,
 	decodeType,
 	decodeTypes,
 	detectGamePhase,
@@ -91,11 +97,13 @@ import {
 	readBadges,
 	readBattleStatusFlags,
 	readEnemyPartyCount,
+	readFullParty,
 	readGameProgress,
 	readHmAvailability,
 	readInventory,
 	readMoney,
 	readNearbySprites,
+	readPlayerInfo,
 	readPlayerName,
 	readPokedexCounts,
 	readStatModifiers,
@@ -1547,5 +1555,456 @@ describe('readWildEncounterRate', () => {
 	it('returns 255 for maximum encounter rate', () => {
 		const ram = makeRam({ [ADDR_GRASS_RATE]: 255 });
 		expect(readWildEncounterRate(ram)).toBe(255);
+	});
+});
+
+// ─── decodeBCD Tests ─────────────────────────────────────────────────────────
+
+describe('decodeBCD', () => {
+	it('decodes [0x01, 0x23, 0x45] to 12345', () => {
+		expect(decodeBCD([0x01, 0x23, 0x45])).toBe(12345);
+	});
+
+	it('decodes max money [0x99, 0x99, 0x99] to 999999', () => {
+		expect(decodeBCD([0x99, 0x99, 0x99])).toBe(999999);
+	});
+
+	it('decodes zero [0x00, 0x00, 0x00] to 0', () => {
+		expect(decodeBCD([0x00, 0x00, 0x00])).toBe(0);
+	});
+
+	it('decodes single byte [0x42] to 42', () => {
+		expect(decodeBCD([0x42])).toBe(42);
+	});
+
+	it('decodes two bytes [0x05, 0x00] to 500', () => {
+		expect(decodeBCD([0x05, 0x00])).toBe(500);
+	});
+});
+
+// ─── decodeStatusCondition Tests ─────────────────────────────────────────────
+
+describe('decodeStatusCondition', () => {
+	it('returns "healthy" for 0x00', () => {
+		expect(decodeStatusCondition(0x00)).toBe('healthy');
+	});
+
+	it('returns "poisoned" for 0x40', () => {
+		expect(decodeStatusCondition(0x40)).toBe('poisoned');
+	});
+
+	it('returns "asleep" for 0x03 (3 sleep turns)', () => {
+		expect(decodeStatusCondition(0x03)).toBe('asleep');
+	});
+
+	it('returns "burned" for burn bit', () => {
+		expect(decodeStatusCondition(0x10)).toBe('burned');
+	});
+
+	it('returns "frozen" for freeze bit', () => {
+		expect(decodeStatusCondition(0x08)).toBe('frozen');
+	});
+
+	it('returns "paralyzed" for paralysis bit', () => {
+		expect(decodeStatusCondition(0x20)).toBe('paralyzed');
+	});
+
+	it('returns "asleep" for 1 sleep turn', () => {
+		expect(decodeStatusCondition(0x01)).toBe('asleep');
+	});
+});
+
+// ─── readPlayerInfo Tests ────────────────────────────────────────────────────
+
+describe('readPlayerInfo', () => {
+	it('returns name, money, badges, location, direction', () => {
+		const ram = makeRam({
+			// Name: "RED"
+			[OVERWORLD_PLAYER_NAME_ADDR]: 0x91, // R
+			[OVERWORLD_PLAYER_NAME_ADDR + 1]: 0x84, // E
+			[OVERWORLD_PLAYER_NAME_ADDR + 2]: 0x83, // D
+			[OVERWORLD_PLAYER_NAME_ADDR + 3]: 0x50,
+			// Money: $12345
+			[OVERWORLD_PLAYER_MONEY]: 0x01,
+			[OVERWORLD_PLAYER_MONEY + 1]: 0x23,
+			[OVERWORLD_PLAYER_MONEY + 2]: 0x45,
+			// Badges: Boulder + Cascade
+			[OVERWORLD_BADGES]: 0x03,
+			// Location: Pallet Town (5, 3)
+			[OVERWORLD_CUR_MAP]: 0x00,
+			[OVERWORLD_X_COORD]: 5,
+			[OVERWORLD_Y_COORD]: 3,
+			// Direction: up
+			[ADDR_PLAYER_DIRECTION]: 0x04,
+		});
+		const info = readPlayerInfo(ram);
+		expect(info.name).toBe('RED');
+		expect(info.money).toBe(12345);
+		expect(info.badges).toBe(2);
+		expect(info.badgeList).toEqual(['Boulder Badge', 'Cascade Badge']);
+		expect(info.location.mapId).toBe(0);
+		expect(info.location.mapName).toBe('Pallet Town');
+		expect(info.location.x).toBe(5);
+		expect(info.location.y).toBe(3);
+		expect(info.direction).toBe('up');
+	});
+
+	it('returns all 8 badge names when all badges obtained', () => {
+		const ram = makeRam({ [OVERWORLD_BADGES]: 0xff });
+		const info = readPlayerInfo(ram);
+		expect(info.badges).toBe(8);
+		expect(info.badgeList).toHaveLength(8);
+		expect(info.badgeList[0]).toBe('Boulder Badge');
+		expect(info.badgeList[7]).toBe('Earth Badge');
+	});
+
+	it('returns PLAYER fallback name for empty name', () => {
+		const ram = makeRam({ [OVERWORLD_PLAYER_NAME_ADDR]: 0x50 });
+		const info = readPlayerInfo(ram);
+		expect(info.name).toBe('PLAYER');
+	});
+
+	it('returns map name from lookup table', () => {
+		const ram = makeRam({ [OVERWORLD_CUR_MAP]: 0x0c });
+		const info = readPlayerInfo(ram);
+		expect(info.location.mapName).toBe('Route 1');
+	});
+});
+
+// ─── readFullParty Tests ─────────────────────────────────────────────────────
+
+type TestPartyMon = {
+	species: number;
+	hp: number;
+	maxHp: number;
+	level: number;
+	status: number;
+	type1: number;
+	type2: number;
+	moves: Array<number>;
+	pps: Array<number>;
+	attack: number;
+	defense: number;
+	speed: number;
+	special: number;
+	nickname?: Array<number>;
+};
+
+function writeWord(overrides: Record<number, number>, addr: number, value: number): void {
+	overrides[addr] = (value >> 8) & 0xff;
+	overrides[addr + 1] = value & 0xff;
+}
+
+function writeByteArray(overrides: Record<number, number>, addr: number, bytes: Array<number>): void {
+	for (let j = 0; j < bytes.length; j++) {
+		overrides[addr + j] = bytes[j] ?? 0;
+	}
+}
+
+function writePartySlot(overrides: Record<number, number>, index: number, p: TestPartyMon): void {
+	const base = ADDR_PARTY_MONS + index * 0x2c;
+	overrides[base] = p.species;
+	writeWord(overrides, base + 0x01, p.hp);
+	overrides[base + 0x21] = p.level;
+	overrides[base + 0x04] = p.status;
+	overrides[base + 0x05] = p.type1;
+	overrides[base + 0x06] = p.type2;
+	writeByteArray(overrides, base + 0x08, p.moves);
+	writeByteArray(overrides, base + 0x1d, p.pps);
+	writeWord(overrides, base + 0x22, p.maxHp);
+	writeWord(overrides, base + 0x24, p.attack);
+	writeWord(overrides, base + 0x26, p.defense);
+	writeWord(overrides, base + 0x28, p.speed);
+	writeWord(overrides, base + 0x2a, p.special);
+	if (p.nickname) {
+		writeByteArray(overrides, ADDR_PARTY_NICKNAMES + index * 11, p.nickname);
+	}
+}
+
+function makePartyRam(count: number, pokemon: Array<TestPartyMon>): ReadonlyArray<number> {
+	const overrides: Record<number, number> = {};
+	overrides[ADDR_PARTY_COUNT] = count;
+	for (let i = 0; i < pokemon.length; i++) {
+		const p = pokemon[i];
+		if (p) writePartySlot(overrides, i, p);
+	}
+	return makeRam(overrides);
+}
+
+describe('readFullParty', () => {
+	it('returns empty array when party count is 0', () => {
+		const ram = makeRam();
+		expect(readFullParty(ram)).toEqual([]);
+	});
+
+	it('reads 3 Pokemon with correct data', () => {
+		const ram = makePartyRam(3, [
+			{
+				species: 0x54, // Pikachu
+				hp: 50,
+				maxHp: 80,
+				level: 25,
+				status: 0,
+				type1: 0x17,
+				type2: 0x17, // Electric
+				moves: [0x54],
+				pps: [15], // Thunderbolt (move 84)
+				attack: 55,
+				defense: 40,
+				speed: 90,
+				special: 50,
+				nickname: [0x8f, 0x88, 0x8a, 0x80, 0x50], // "PIKA"
+			},
+			{
+				species: 0xb4, // Charizard
+				hp: 120,
+				maxHp: 150,
+				level: 36,
+				status: 0,
+				type1: 0x14,
+				type2: 0x02, // Fire/Flying
+				moves: [0x34, 0x07],
+				pps: [15, 25], // Flamethrower, Fire Punch?
+				attack: 84,
+				defense: 78,
+				speed: 100,
+				special: 85,
+			},
+			{
+				species: 0x99, // Bulbasaur
+				hp: 45,
+				maxHp: 45,
+				level: 15,
+				status: 0x40, // poisoned
+				type1: 0x16,
+				type2: 0x03, // Grass/Poison
+				moves: [0x16, 0x4d],
+				pps: [25, 30],
+				attack: 30,
+				defense: 35,
+				speed: 28,
+				special: 40,
+			},
+		]);
+		const party = readFullParty(ram);
+		expect(party).toHaveLength(3);
+
+		// First Pokemon - Pikachu
+		expect(party[0]?.species).toBe('Pikachu');
+		expect(party[0]?.speciesId).toBe(0x54);
+		expect(party[0]?.nickname).toBe('PIKA');
+		expect(party[0]?.level).toBe(25);
+		expect(party[0]?.hp).toBe(50);
+		expect(party[0]?.maxHp).toBe(80);
+		expect(party[0]?.status).toBe('healthy');
+		expect(party[0]?.stats.attack).toBe(55);
+		expect(party[0]?.stats.defense).toBe(40);
+		expect(party[0]?.stats.speed).toBe(90);
+		expect(party[0]?.stats.specialAttack).toBe(50);
+		expect(party[0]?.stats.specialDefense).toBe(50);
+
+		// Second Pokemon - Charizard
+		expect(party[1]?.species).toBe('Charizard');
+		expect(party[1]?.level).toBe(36);
+		expect(party[1]?.stats.attack).toBe(84);
+
+		// Third Pokemon - Bulbasaur (poisoned)
+		expect(party[2]?.species).toBe('Bulbasaur');
+		expect(party[2]?.status).toBe('poisoned');
+	});
+
+	it('reads actual stats from RAM instead of estimates', () => {
+		const ram = makePartyRam(1, [
+			{
+				species: 0x54, // Pikachu
+				hp: 50,
+				maxHp: 80,
+				level: 25,
+				status: 0,
+				type1: 0x17,
+				type2: 0x17,
+				moves: [0x54],
+				pps: [15],
+				attack: 120,
+				defense: 95,
+				speed: 200,
+				special: 180,
+			},
+		]);
+		const party = readFullParty(ram);
+		expect(party[0]?.stats.attack).toBe(120);
+		expect(party[0]?.stats.defense).toBe(95);
+		expect(party[0]?.stats.speed).toBe(200);
+		expect(party[0]?.stats.specialAttack).toBe(180);
+		expect(party[0]?.stats.specialDefense).toBe(180);
+	});
+
+	it('uses species name as fallback when nickname is empty', () => {
+		const ram = makePartyRam(1, [
+			{
+				species: 0x54, // Pikachu
+				hp: 50,
+				maxHp: 50,
+				level: 10,
+				status: 0,
+				type1: 0x17,
+				type2: 0x17,
+				moves: [0x54],
+				pps: [15],
+				attack: 30,
+				defense: 20,
+				speed: 40,
+				special: 25,
+				nickname: [0x50], // immediate terminator = empty
+			},
+		]);
+		const party = readFullParty(ram);
+		expect(party[0]?.nickname).toBe('Pikachu');
+	});
+
+	it('includes move details with moveId, type, and power', () => {
+		const ram = makePartyRam(1, [
+			{
+				species: 0x54,
+				hp: 50,
+				maxHp: 50,
+				level: 25,
+				status: 0,
+				type1: 0x17,
+				type2: 0x17,
+				moves: [0x55, 0x56], // Thunder, Body Slam (move IDs 85, 86)
+				pps: [10, 15],
+				attack: 55,
+				defense: 40,
+				speed: 90,
+				special: 50,
+			},
+		]);
+		const party = readFullParty(ram);
+		const moves = party[0]?.moves;
+		expect(moves).toBeDefined();
+		expect(moves?.length).toBeGreaterThanOrEqual(1);
+		// Each move should have moveId, pp, maxPp, type, power
+		const firstMove = moves?.[0];
+		expect(firstMove?.moveId).toBeGreaterThan(0);
+		expect(firstMove?.pp).toBeGreaterThanOrEqual(0);
+		expect(firstMove?.type).toBeDefined();
+	});
+
+	it('provides Struggle fallback when Pokemon has no moves', () => {
+		const ram = makePartyRam(1, [
+			{
+				species: 0x54,
+				hp: 50,
+				maxHp: 50,
+				level: 25,
+				status: 0,
+				type1: 0x17,
+				type2: 0x17,
+				moves: [],
+				pps: [],
+				attack: 55,
+				defense: 40,
+				speed: 90,
+				special: 50,
+			},
+		]);
+		const party = readFullParty(ram);
+		expect(party[0]?.moves).toHaveLength(1);
+		expect(party[0]?.moves[0]?.name).toBe('Struggle');
+	});
+
+	it('skips empty species slots (0x00 or 0xFF)', () => {
+		const overrides: Record<number, number> = {
+			[ADDR_PARTY_COUNT]: 3,
+		};
+		// Slot 0: valid
+		const base0 = ADDR_PARTY_MONS;
+		overrides[base0] = 0x54; // Pikachu
+		overrides[base0 + 0x21] = 10;
+		overrides[base0 + 0x22] = 0;
+		overrides[base0 + 0x23] = 50;
+		overrides[base0 + 0x24] = 0;
+		overrides[base0 + 0x25] = 30;
+		overrides[base0 + 0x26] = 0;
+		overrides[base0 + 0x27] = 20;
+		overrides[base0 + 0x28] = 0;
+		overrides[base0 + 0x29] = 40;
+		overrides[base0 + 0x2a] = 0;
+		overrides[base0 + 0x2b] = 25;
+
+		// Slot 1: empty (0xFF)
+		const base1 = ADDR_PARTY_MONS + 0x2c;
+		overrides[base1] = 0xff;
+
+		// Slot 2: valid
+		const base2 = ADDR_PARTY_MONS + 2 * 0x2c;
+		overrides[base2] = 0x99; // Bulbasaur
+		overrides[base2 + 0x21] = 5;
+		overrides[base2 + 0x22] = 0;
+		overrides[base2 + 0x23] = 30;
+		overrides[base2 + 0x24] = 0;
+		overrides[base2 + 0x25] = 20;
+		overrides[base2 + 0x26] = 0;
+		overrides[base2 + 0x27] = 20;
+		overrides[base2 + 0x28] = 0;
+		overrides[base2 + 0x29] = 20;
+		overrides[base2 + 0x2a] = 0;
+		overrides[base2 + 0x2b] = 20;
+
+		const ram = makeRam(overrides);
+		const party = readFullParty(ram);
+		expect(party).toHaveLength(2);
+		expect(party[0]?.species).toBe('Pikachu');
+		expect(party[1]?.species).toBe('Bulbasaur');
+	});
+
+	it('caps party count at 6', () => {
+		const overrides: Record<number, number> = {
+			[ADDR_PARTY_COUNT]: 100, // absurd count
+		};
+		// Only set 6 valid slots
+		for (let i = 0; i < 6; i++) {
+			const base = ADDR_PARTY_MONS + i * 0x2c;
+			overrides[base] = 0x54;
+			overrides[base + 0x21] = 10;
+			overrides[base + 0x22] = 0;
+			overrides[base + 0x23] = 50;
+			overrides[base + 0x24] = 0;
+			overrides[base + 0x25] = 30;
+			overrides[base + 0x26] = 0;
+			overrides[base + 0x27] = 20;
+			overrides[base + 0x28] = 0;
+			overrides[base + 0x29] = 40;
+			overrides[base + 0x2a] = 0;
+			overrides[base + 0x2b] = 25;
+		}
+		const ram = makeRam(overrides);
+		const party = readFullParty(ram);
+		expect(party.length).toBeLessThanOrEqual(6);
+	});
+
+	it('decodes Pokemon nicknames from text encoding', () => {
+		const ram = makePartyRam(1, [
+			{
+				species: 0x54,
+				hp: 50,
+				maxHp: 50,
+				level: 25,
+				status: 0,
+				type1: 0x17,
+				type2: 0x17,
+				moves: [0x54],
+				pps: [15],
+				attack: 55,
+				defense: 40,
+				speed: 90,
+				special: 50,
+				// "SPARKY" = S(0x92) P(0x8f) A(0x80) R(0x91) K(0x8a) Y(0x98) terminator(0x50)
+				nickname: [0x92, 0x8f, 0x80, 0x91, 0x8a, 0x98, 0x50],
+			},
+		]);
+		const party = readFullParty(ram);
+		expect(party[0]?.nickname).toBe('SPARKY');
 	});
 });
