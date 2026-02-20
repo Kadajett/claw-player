@@ -24,6 +24,27 @@ import {
 // Battle flags
 export const ADDR_BATTLE_TYPE = 0xd057; // 0=no battle, 1=wild, 2=trainer
 export const ADDR_IN_BATTLE = 0xd058; // non-zero when in battle
+export const ADDR_W_BATTLE_TYPE = 0xd05a; // wBattleType: 0=normal, 1=Old Man, 2=Safari Zone
+
+// Game state flags (wStatusFlags1-7)
+export const ADDR_STATUS_FLAGS_1 = 0xd728; // wStatusFlags1: bit flags for game state
+export const ADDR_STATUS_FLAGS_2 = 0xd729; // wStatusFlags2: more state flags
+export const ADDR_STATUS_FLAGS_3 = 0xd72a; // wStatusFlags3: more state flags
+export const ADDR_STATUS_FLAGS_4 = 0xd72b; // wStatusFlags4: more state flags
+export const ADDR_STATUS_FLAGS_5 = 0xd72c; // wStatusFlags5: more state flags
+export const ADDR_STATUS_FLAGS_6 = 0xd72d; // wStatusFlags6: more state flags
+export const ADDR_STATUS_FLAGS_7 = 0xd72e; // wStatusFlags7: more state flags
+export const ADDR_ELITE4_FLAGS = 0xd734; // wElite4Flags: Elite Four progress flags
+export const ADDR_MOVEMENT_FLAGS = 0xd736; // wMovementFlags: movement restriction flags
+
+// Movement
+export const ADDR_WALK_BIKE_SURF_STATE = 0xd700; // wWalkBikeSurfState: 0=walking, 1=biking, 2=surfing
+export const ADDR_PLAYER_DIRECTION = 0xd52a; // wPlayerDirection: more accurate than sprite facing
+
+// Collision
+export const ADDR_TILE_IN_FRONT_OF_PLAYER = 0xcfc6; // wTileInFrontOfPlayer: tile ID player is facing
+export const ADDR_BOULDER_COLLISION_RESULT = 0xd71c; // wTileInFrontOfBoulderCollisionResult
+export const ADDR_GRASS_TILE = 0xd535; // wGrassTile: grass tile ID for current map
 
 // Player's active Pokemon (wBattleMon @ 0xD014, from pret/pokered battle_struct)
 export const ADDR_PLAYER_SPECIES = 0xd014; // wBattleMonSpecies
@@ -849,6 +870,48 @@ export function readWarps(ram: ReadonlyArray<number>): Array<WarpInfo> {
 		});
 	}
 	return warps;
+}
+
+// ─── Movement & Collision Helper Functions ───────────────────────────────────
+
+export type MovementMode = 'walking' | 'biking' | 'surfing';
+
+export function readMovementMode(ram: ReadonlyArray<number>): MovementMode {
+	const value = ram[ADDR_WALK_BIKE_SURF_STATE] ?? 0;
+	switch (value) {
+		case 1:
+			return 'biking';
+		case 2:
+			return 'surfing';
+		default:
+			return 'walking';
+	}
+}
+
+export function describeTileInFront(ram: ReadonlyArray<number>): { tileId: number; description: string } {
+	const tileId = ram[ADDR_TILE_IN_FRONT_OF_PLAYER] ?? 0;
+	const grassTile = ram[ADDR_GRASS_TILE] ?? 0;
+
+	let description: string;
+	if (tileId === grassTile && grassTile !== 0) {
+		description = 'grass';
+	} else if (tileId === 0x00) {
+		description = 'floor';
+	} else if (tileId >= 0x01 && tileId <= 0x07) {
+		description = 'wall';
+	} else if (tileId === 0x14) {
+		description = 'water';
+	} else if (tileId === 0x15) {
+		description = 'ledge';
+	} else if (tileId === 0x3d) {
+		description = 'door';
+	} else if (tileId === 0x61) {
+		description = 'tree';
+	} else {
+		description = `tile 0x${tileId.toString(16).padStart(2, '0')}`;
+	}
+
+	return { tileId, description };
 }
 
 // Pokemon Red tilemap: cursor arrow tile

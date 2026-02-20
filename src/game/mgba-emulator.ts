@@ -153,6 +153,22 @@ export class MgbaEmulator implements GameBoyEmulator {
 			// Tileset collision detection
 			0xd367, // wCurMapTileset
 			0xcfc6, // wTileInFrontOfPlayer
+			0xd71c, // wTileInFrontOfBoulderCollisionResult
+			0xd535, // wGrassTile
+			// Movement
+			0xd700, // wWalkBikeSurfState
+			0xd52a, // wPlayerDirection
+			// Game state flags
+			0xd05a, // wBattleType (normal/Old Man/Safari)
+			0xd728, // wStatusFlags1
+			0xd729, // wStatusFlags2
+			0xd72a, // wStatusFlags3
+			0xd72b, // wStatusFlags4
+			0xd72c, // wStatusFlags5
+			0xd72d, // wStatusFlags6
+			0xd72e, // wStatusFlags7
+			0xd734, // wElite4Flags
+			0xd736, // wMovementFlags
 			// Player info
 			0xd158,
 			0xd159,
