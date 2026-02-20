@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claw-relay
+  namespace: openclaw
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: claw-relay
+  template:
+    metadata:
+      labels:
+        app: claw-relay
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: relay
+          image: localhost:5000/claw-relay:latest
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: relay-config
+          env:
+            - name: RELAY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: RELAY_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: REDIS_PASSWORD
+            - name: REGISTRATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: REGISTRATION_SECRET
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis.openclaw.svc.cluster.local:6379"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "250m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: claw-relay-hpa
+  namespace: openclaw
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: claw-relay
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

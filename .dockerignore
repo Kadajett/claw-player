@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.env*
+roms/
+*.gb
+*.gbc
+*.sav
+.git
+.claude
+.husky
+*.test.ts
+*.spec.ts

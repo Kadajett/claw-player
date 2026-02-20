@@ -1,14 +1,16 @@
+import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import uWS from 'uWebSockets.js';
 import type { HttpRequest, HttpResponse, WebSocket, us_listen_socket } from 'uWebSockets.js';
 
 import { lookupApiKey } from '../auth/api-key.js';
 import { checkRateLimit, getRateLimitBurst } from '../auth/rate-limiter.js';
+import { registerAgent } from '../auth/registration.js';
 import { createLogger } from '../logger.js';
-import { createRedisClient } from '../redis/client.js';
-import { VoteRequestSchema } from '../types/api.js';
+import { createRedisClient, createRedisSubscriber } from '../redis/client.js';
+import { RegisterRequestSchema, VoteRequestSchema } from '../types/api.js';
 import { assertRelayServerConfig, loadRelayConfig } from './config.js';
-import type { BattleState, HomeClientMessage, RelayMessage, VoteBuffer, VoteBufferEntry } from './types.js';
+import type { BattleState, HomeClientMessage, RelayMessage, VoteBufferEntry } from './types.js';
 import { HomeClientMessageSchema } from './types.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -62,21 +64,25 @@ export class RelayServer {
 	private readonly logger: Logger;
 	private readonly relaySecret: string;
 	private readonly port: number;
+	private readonly redis: Redis;
+	private readonly redisSub: Redis;
 
 	private listenSocket: us_listen_socket | null = null;
 	private homeWs: WebSocket<HomeWsData> | null = null;
 	private homeConnectedAt: number | null = null;
 	private lastHomeHeartbeatAt: number | null = null;
 	private cachedState: BattleState | null = null;
-	private voteBuffer: VoteBuffer = new Map();
 	private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-	constructor(relaySecret: string, port: number, logger: Logger) {
+	constructor(relaySecret: string, port: number, logger: Logger, redis: Redis, redisSub: Redis) {
 		this.relaySecret = relaySecret;
 		this.port = port;
 		this.logger = logger;
+		this.redis = redis;
+		this.redisSub = redisSub;
 		this.app = uWS.App();
 		this.setupRoutes();
+		this.setupPubSub();
 	}
 
 	private isHomeConnected(): boolean {
@@ -96,18 +102,42 @@ export class RelayServer {
 	}
 
 	private broadcastToAgents(msg: RelayMessage): void {
-		this.app.publish('game-state', JSON.stringify(msg));
+		const data = JSON.stringify(msg);
+		// Publish to Redis so all relay pods receive the broadcast
+		this.redis.publish('relay:state-broadcast', data).catch((err: unknown) => {
+			this.logger.error({ err }, 'Failed to publish state broadcast to Redis');
+		});
 	}
 
-	private flushVoteBuffer(tickId: number, gameId: string): void {
-		if (this.voteBuffer.size === 0) return;
+	private setupPubSub(): void {
+		this.redisSub.subscribe('relay:state-broadcast').catch((err: unknown) => {
+			this.logger.error({ err }, 'Failed to subscribe to relay:state-broadcast');
+		});
 
-		const votes = Array.from(this.voteBuffer.entries()).map(([agentId, entry]) => ({
-			agentId,
-			// biome-ignore lint/suspicious/noExplicitAny: action is validated as BattleAction at ingestion time
-			action: entry.action as any,
-			timestamp: entry.timestamp,
-		}));
+		this.redisSub.on('message', (channel: string, data: string) => {
+			if (channel === 'relay:state-broadcast') {
+				this.app.publish('game-state', data);
+			}
+		});
+
+		this.logger.info('Redis Pub/Sub configured for cross-pod broadcast');
+	}
+
+	private async flushVoteBuffer(tickId: number, gameId: string): Promise<void> {
+		const redisKey = `relay:votes:${gameId}`;
+		const rawVotes = await this.redis.hgetall(redisKey);
+
+		if (Object.keys(rawVotes).length === 0) return;
+
+		const votes = Object.entries(rawVotes).map(([agentId, raw]) => {
+			const entry = JSON.parse(raw) as VoteBufferEntry;
+			return {
+				agentId,
+				// biome-ignore lint/suspicious/noExplicitAny: action is validated as BattleAction at ingestion time
+				action: entry.action as any,
+				timestamp: entry.timestamp,
+			};
+		});
 
 		const batch: RelayMessage = {
 			type: 'vote_batch',
@@ -118,7 +148,7 @@ export class RelayServer {
 
 		const sent = this.sendToHome(batch);
 		if (sent) {
-			this.voteBuffer.clear();
+			await this.redis.del(redisKey);
 			this.logger.info({ tickId, gameId, voteCount: votes.length }, 'Vote batch flushed to home client');
 		} else {
 			this.logger.warn({ tickId, gameId, voteCount: votes.length }, 'Home client not connected, vote batch queued');
@@ -192,7 +222,9 @@ export class RelayServer {
 		}
 
 		if (msg.type === 'votes_request') {
-			this.flushVoteBuffer(msg.tickId, msg.gameId);
+			this.flushVoteBuffer(msg.tickId, msg.gameId).catch((err: unknown) => {
+				this.logger.error({ err, tickId: msg.tickId, gameId: msg.gameId }, 'Failed to flush vote buffer');
+			});
 		}
 	}
 
@@ -214,13 +246,33 @@ export class RelayServer {
 
 	private setupRoutes(): void {
 		this.app.get('/health', (res: HttpResponse, _req: HttpRequest) => {
-			sendJson(res, 200, {
-				status: 'ok',
-				time: Date.now(),
-				homeConnected: this.isHomeConnected(),
-				cachedStateTick: this.cachedState?.turn ?? null,
-				bufferedVotes: this.voteBuffer.size,
+			let aborted = false;
+			res.onAborted(() => {
+				aborted = true;
 			});
+
+			this.getBufferedVoteCount()
+				.then((bufferedVotes) => {
+					if (aborted) return;
+					sendJson(res, 200, {
+						status: 'ok',
+						time: Date.now(),
+						homeConnected: this.isHomeConnected(),
+						cachedStateTick: this.cachedState?.turn ?? null,
+						bufferedVotes,
+					});
+				})
+				.catch((err: unknown) => {
+					this.logger.error({ err }, 'Error in /health handler');
+					if (!aborted)
+						sendJson(res, 200, {
+							status: 'ok',
+							time: Date.now(),
+							homeConnected: this.isHomeConnected(),
+							cachedStateTick: this.cachedState?.turn ?? null,
+							bufferedVotes: -1,
+						});
+				});
 		});
 
 		this.app.ws<HomeWsData>('/home/connect', {
@@ -363,6 +415,8 @@ export class RelayServer {
 			uWS.us_listen_socket_close(this.listenSocket);
 			this.listenSocket = null;
 		}
+		await this.redisSub.unsubscribe('relay:state-broadcast').catch(() => {});
+		await this.redisSub.quit().catch(() => {});
 		this.logger.info('Relay server closed');
 	}
 
@@ -374,12 +428,12 @@ export class RelayServer {
 		return this.cachedState;
 	}
 
-	getBufferedVoteCount(): number {
-		return this.voteBuffer.size;
+	async getBufferedVoteCount(gameId = 'default'): Promise<number> {
+		return this.redis.hlen(`relay:votes:${gameId}`);
 	}
 
-	bufferVote(agentId: string, entry: VoteBufferEntry): void {
-		this.voteBuffer.set(agentId, entry);
+	async bufferVote(agentId: string, entry: VoteBufferEntry, gameId = 'default'): Promise<void> {
+		await this.redis.hset(`relay:votes:${gameId}`, agentId, JSON.stringify(entry));
 		this.logger.debug({ agentId, action: entry.action }, 'Vote buffered');
 	}
 }
@@ -424,10 +478,14 @@ export async function startRelayServer(): Promise<RelayServer> {
 
 	const logger = createLogger('relay-server');
 	// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-	const redis = createRedisClient(process.env['REDIS_URL'] ?? 'redis://localhost:6379');
+	const redisUrl = process.env['REDIS_URL'] ?? 'redis://localhost:6379';
+	const redis = createRedisClient(redisUrl);
 	await redis.connect();
 
-	const server = new RelayServer(relayConfig.RELAY_SECRET, relayConfig.RELAY_PORT, logger);
+	const redisSub = createRedisSubscriber(redisUrl);
+	await redisSub.connect();
+
+	const server = new RelayServer(relayConfig.RELAY_SECRET, relayConfig.RELAY_PORT, logger, redis, redisSub);
 	const app = server.getApp();
 
 	app.get('/api/v1/state', (res: HttpResponse, req: HttpRequest) => {
@@ -488,7 +546,7 @@ export async function startRelayServer(): Promise<RelayServer> {
 
 				const { action } = parsed.data;
 
-				server.bufferVote(auth.agent.agentId, {
+				await server.bufferVote(auth.agent.agentId, {
 					agentId: auth.agent.agentId,
 					action,
 					timestamp: Date.now(),
@@ -505,6 +563,60 @@ export async function startRelayServer(): Promise<RelayServer> {
 			})
 			.catch((err: unknown) => {
 				logger.error({ err }, 'Error in /api/v1/vote handler');
+				if (!aborted) sendJson(res, 500, { error: 'Internal server error' });
+			});
+	});
+
+	// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+	const registrationSecret = process.env['REGISTRATION_SECRET'];
+
+	app.post('/api/v1/register', (res: HttpResponse, req: HttpRequest) => {
+		const reqSecret = req.getHeader('x-registration-secret');
+		let aborted = false;
+		res.onAborted(() => {
+			aborted = true;
+		});
+
+		readBody(res)
+			// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: uWS handler requires sequential validation guards
+			.then(async (bodyStr) => {
+				if (registrationSecret && reqSecret !== registrationSecret) {
+					sendJson(res, 401, { error: 'Invalid registration secret', code: 'INVALID_REGISTRATION_SECRET' });
+					return;
+				}
+
+				let body: unknown;
+				try {
+					body = JSON.parse(bodyStr);
+				} catch {
+					sendJson(res, 400, { error: 'Invalid JSON', code: 'PARSE_ERROR' });
+					return;
+				}
+
+				const parsed = RegisterRequestSchema.safeParse(body);
+				if (!parsed.success) {
+					sendJson(res, 400, {
+						error: 'Invalid request body',
+						code: 'VALIDATION_ERROR',
+						details: parsed.error.flatten(),
+					});
+					return;
+				}
+
+				if (aborted) return;
+
+				const result = await registerAgent(redis, parsed.data.agentId, logger);
+				if (aborted) return;
+
+				if (!result.ok) {
+					sendJson(res, 409, { error: result.message, code: result.code });
+					return;
+				}
+
+				sendJson(res, 200, result.response);
+			})
+			.catch((err: unknown) => {
+				logger.error({ err }, 'Error in /api/v1/register handler');
 				if (!aborted) sendJson(res, 500, { error: 'Internal server error' });
 			});
 	});

@@ -18,6 +18,7 @@ import { TickProcessor } from './game/tick-processor.js';
 import { VoteAggregator } from './game/vote-aggregator.js';
 import { createMcpHttpServer } from './mcp/server.js';
 import { createRedisClient } from './redis/client.js';
+import { createHomeClient } from './relay/home-client.js';
 import { RegisterRequestSchema, VoteRequestSchema, WsIncomingMessageSchema } from './types/api.js';
 import type { WsOutgoingMessage } from './types/api.js';
 
@@ -124,6 +125,35 @@ const mcpServer = createMcpHttpServer({
 	port: config.MCP_PORT,
 	host: config.HOST,
 });
+
+// ─── Relay Home Client (when RELAY_MODE=client) ────────────────────────────
+
+if (config.RELAY_MODE === 'client') {
+	const homeClient = createHomeClient(
+		async (batch) => {
+			for (const vote of batch.votes) {
+				await redis.zincrby('tick:current:votes', 1, vote.action);
+			}
+			logger.info(
+				{ tickId: batch.tickId, gameId: batch.gameId, voteCount: batch.votes.length },
+				'Relay vote batch injected into local aggregator',
+			);
+		},
+		async () => {
+			const rawState = await redis.get(`game:state:${GAME_ID}`);
+			if (!rawState) return null;
+			return JSON.parse(rawState) as import('./game/types.js').BattleState;
+		},
+	);
+
+	homeClient.start();
+	logger.info('Home client started, connecting to relay');
+
+	// Push state to relay after each tick
+	tickProcessor.onTick(async (state) => {
+		await homeClient.pushState(state.turn, state.gameId, state);
+	});
+}
 
 // ─── uWS Helpers ────────────────────────────────────────────────────────────
 

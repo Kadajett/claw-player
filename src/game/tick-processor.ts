@@ -9,6 +9,8 @@ import type { StateManager } from './state.js';
 import { type BattleState, DEFAULT_FALLBACK_ACTION, type TickResult } from './types.js';
 import type { VoteAggregator } from './vote-aggregator.js';
 
+export type TickCallback = (state: BattleState) => Promise<void> | void;
+
 export type TickProcessorOptions = {
 	tickIntervalMs: number;
 	useRealEmulator?: boolean | undefined;
@@ -19,6 +21,7 @@ export class TickProcessor {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private currentGameId: string | null = null;
 	private currentState: BattleState | null = null;
+	private tickCallbacks: Array<TickCallback> = [];
 
 	private readonly stateManager: StateManager;
 	private readonly voteAggregator: VoteAggregator;
@@ -78,6 +81,10 @@ export class TickProcessor {
 
 	isRunning(): boolean {
 		return this.timer !== null;
+	}
+
+	onTick(callback: TickCallback): void {
+		this.tickCallbacks.push(callback);
 	}
 
 	private async processTick(): Promise<TickResult | null> {
@@ -145,6 +152,15 @@ export class TickProcessor {
 			},
 			'Battle tick processed',
 		);
+
+		// Notify tick callbacks (e.g., relay home client)
+		for (const cb of this.tickCallbacks) {
+			try {
+				await cb(newState);
+			} catch (err) {
+				this.logger.error({ err }, 'Tick callback error');
+			}
+		}
 
 		// Auto-stop when battle is over
 		if (newState.phase === 'battle_over') {

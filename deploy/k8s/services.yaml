@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay-internal
+  namespace: openclaw
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4000
+      targetPort: 4000
+  selector:
+    app: claw-relay
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay-external
+  namespace: openclaw
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 4000
+      targetPort: 4000
+  selector:
+    app: claw-relay
