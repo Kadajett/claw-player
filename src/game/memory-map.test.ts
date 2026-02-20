@@ -2753,8 +2753,8 @@ describe('extractUnifiedGameState', () => {
 
 	// ─── Phase Detection Integration ────────────────────────────────────────
 
-	it('detects Dialogue phase via text delay flags', () => {
-		const ram = makeOverworldRam({ [OVERWORLD_TEXT_DELAY_FLAGS]: 1 });
+	it('detects Dialogue phase via wd730 bit 6 (text box visible)', () => {
+		const ram = makeOverworldRam({ [ADDR_TEXT_STATUS_FLAGS]: 0x40 });
 		const state = extractUnifiedGameState(ram, 'g', 0);
 		expect(state.phase).toBe(GamePhase.Dialogue);
 		// Still in overworld (not in battle), so overworld should be populated

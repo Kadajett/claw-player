@@ -1494,12 +1494,14 @@ export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 		return GamePhase.Menu;
 	}
 
-	// wLetterPrintingDelayFlags (0xd358): non-zero when text is being printed
-	// wTextBoxID (0xd125): non-zero when a text box or info box is active
-	const textDelayFlags = ram[OVERWORLD_TEXT_DELAY_FLAGS] ?? 0;
-	const textBoxId = ram[OVERWORLD_TEXT_BOX_ID] ?? 0;
+	// wd730 bit 6 (0xd730): set when a text box is actually visible on screen.
+	// wTextBoxID (0xd125) and wLetterPrintingDelayFlags (0xd358) are unreliable:
+	// wTextBoxID retains its value after dialogue closes, and
+	// wLetterPrintingDelayFlags reflects text speed config, not active printing.
+	const statusFlags = ram[ADDR_TEXT_STATUS_FLAGS] ?? 0;
+	const textBoxVisible = (statusFlags & 0x40) !== 0;
 
-	if (textDelayFlags !== 0 || textBoxId !== 0) {
+	if (textBoxVisible) {
 		return GamePhase.Dialogue;
 	}
 
