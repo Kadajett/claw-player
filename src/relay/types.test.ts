@@ -39,6 +39,8 @@ const validPokemonState = {
 
 const validOpponentState = {
 	species: 'Blastoise',
+	hp: 77,
+	maxHp: 120,
 	hpPercent: 64,
 	status: 'none',
 	types: ['water'],

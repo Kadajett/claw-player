@@ -102,6 +102,8 @@ export const pokemonStateSchema = z.object({
 
 export type OpponentState = {
 	species: string;
+	hp: number;
+	maxHp: number;
 	hpPercent: number;
 	status: StatusCondition;
 	types: Array<PokemonType>;
@@ -110,6 +112,8 @@ export type OpponentState = {
 
 export const opponentStateSchema = z.object({
 	species: z.string(),
+	hp: z.number().int().min(0),
+	maxHp: z.number().int().min(0),
 	hpPercent: z.number().min(0).max(100),
 	status: statusConditionSchema,
 	types: z.array(pokemonTypeSchema).min(1).max(2),

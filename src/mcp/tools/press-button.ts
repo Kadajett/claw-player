@@ -25,13 +25,14 @@ const ButtonSchema = z.enum(['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', '
 
 const DIRECTIONAL_BUTTONS = new Set<string>(['UP', 'DOWN', 'LEFT', 'RIGHT']);
 
-export function registerPressButtonTool(server: McpServer, emulator: GameBoyEmulator): void {
-	// Persistent navigation state across button presses
-	let lastSuccessfulDirection: string | null = null;
-	let consecutiveBlocks = 0;
-	const blockedDirections = new Set<string>();
-	let lastPosition = { x: -1, y: -1, mapId: -1 };
+// Module-level navigation state persists across MCP server instances
+// (each request creates a fresh McpServer but the module is loaded once)
+let lastSuccessfulDirection: string | null = null;
+let consecutiveBlocks = 0;
+const blockedDirections = new Set<string>();
+let lastPosition = { x: -1, y: -1, mapId: -1 };
 
+export function registerPressButtonTool(server: McpServer, emulator: GameBoyEmulator): void {
 	server.registerTool(
 		'press_button',
 		{

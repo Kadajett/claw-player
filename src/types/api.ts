@@ -65,6 +65,23 @@ export const WsOutgoingMessageSchema = z.discriminatedUnion('type', [
 ]);
 export type WsOutgoingMessage = z.infer<typeof WsOutgoingMessageSchema>;
 
+export const RegisterRequestSchema = z.object({
+	agentId: z
+		.string()
+		.min(3)
+		.max(64)
+		.regex(/^[a-zA-Z0-9_-]+$/, 'agentId must be alphanumeric with hyphens or underscores'),
+});
+export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
+
+export const RegisterResponseSchema = z.object({
+	apiKey: z.string(),
+	agentId: z.string(),
+	plan: z.enum(PLANS),
+	rpsLimit: z.number().int().positive(),
+});
+export type RegisterResponse = z.infer<typeof RegisterResponseSchema>;
+
 export const ErrorResponseSchema = z.object({
 	error: z.string(),
 	code: z.string(),

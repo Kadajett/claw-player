@@ -5,6 +5,7 @@ import type { HttpRequest, HttpResponse, us_listen_socket } from 'uWebSockets.js
 
 import { lookupApiKey } from './auth/api-key.js';
 import { checkRateLimit, getRateLimitBurst } from './auth/rate-limiter.js';
+import { registerAgent } from './auth/registration.js';
 import { loadConfig } from './config.js';
 import type { GameBoyEmulator } from './game/emulator-interface.js';
 import { Emulator } from './game/emulator.js';
@@ -17,7 +18,7 @@ import { TickProcessor } from './game/tick-processor.js';
 import { VoteAggregator } from './game/vote-aggregator.js';
 import { createMcpHttpServer } from './mcp/server.js';
 import { createRedisClient } from './redis/client.js';
-import { VoteRequestSchema, WsIncomingMessageSchema } from './types/api.js';
+import { RegisterRequestSchema, VoteRequestSchema, WsIncomingMessageSchema } from './types/api.js';
 import type { WsOutgoingMessage } from './types/api.js';
 
 const config = loadConfig();
@@ -202,6 +203,57 @@ app.get('/health', (res: HttpResponse, _req: HttpRequest) => {
 		emulatorReady: emulator.isInitialized,
 		gameRunning: tickProcessor.isRunning(),
 	});
+});
+
+app.post('/api/v1/register', (res: HttpResponse, req: HttpRequest) => {
+	const registrationSecret = req.getHeader('x-registration-secret');
+	let aborted = false;
+	res.onAborted(() => {
+		aborted = true;
+	});
+
+	readBody(res)
+		.then(async (bodyStr) => {
+			// Gate registration behind a shared secret when configured
+			if (config.REGISTRATION_SECRET && registrationSecret !== config.REGISTRATION_SECRET) {
+				sendJson(res, 401, { error: 'Invalid registration secret', code: 'INVALID_REGISTRATION_SECRET' });
+				return;
+			}
+
+			let body: unknown;
+			try {
+				body = JSON.parse(bodyStr);
+			} catch {
+				sendJson(res, 400, { error: 'Invalid JSON', code: 'PARSE_ERROR' });
+				return;
+			}
+
+			const parsed = RegisterRequestSchema.safeParse(body);
+			if (!parsed.success) {
+				sendJson(res, 400, {
+					error: 'Invalid request body',
+					code: 'VALIDATION_ERROR',
+					details: parsed.error.flatten(),
+				});
+				return;
+			}
+
+			if (aborted) return;
+
+			const result = await registerAgent(redis, parsed.data.agentId, logger);
+			if (aborted) return;
+
+			if (!result.ok) {
+				sendJson(res, 409, { error: result.message, code: result.code });
+				return;
+			}
+
+			sendJson(res, 200, result.response);
+		})
+		.catch((err: unknown) => {
+			logger.error({ err }, 'Error in /api/v1/register handler');
+			if (!aborted) sendJson(res, 500, { error: 'Internal server error' });
+		});
 });
 
 app.get('/api/v1/state', (res: HttpResponse, req: HttpRequest) => {

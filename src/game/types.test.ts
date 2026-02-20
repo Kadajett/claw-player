@@ -270,6 +270,8 @@ describe('battleStateSchema', () => {
 		playerParty: [validPokemon],
 		opponent: {
 			species: 'Rattata',
+			hp: 30,
+			maxHp: 30,
 			hpPercent: 100,
 			status: 'none',
 			types: ['normal'],
@@ -554,6 +556,8 @@ describe('gameStateSchema', () => {
 		playerParty: [validPokemon],
 		opponent: {
 			species: 'Rattata',
+			hp: 30,
+			maxHp: 30,
 			hpPercent: 100,
 			status: 'none',
 			types: ['normal'],

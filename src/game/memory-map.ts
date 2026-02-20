@@ -1,3 +1,4 @@
+import { MOVE_TABLE } from './move-data.js';
 import {
 	type BattleAction,
 	BattlePhase,
@@ -78,82 +79,160 @@ const TYPE_CODE_MAP: ReadonlyMap<number, PokemonType> = new Map([
 	[0x1a, PokemonType.Dragon],
 ]);
 
-// Gen 1 species codes (1-151) -> species names
-// Partial list - codes map to internal dex order, not National Dex order
+// Gen 1 species codes -> species names (complete, all 151 Pokemon)
+// Internal index order from pret/pokered disassembly (NOT National Dex order)
 const SPECIES_CODE_MAP: ReadonlyMap<number, string> = new Map([
-	[0x99, 'Bulbasaur'],
+	[0x01, 'Rhydon'],
+	[0x02, 'Kangaskhan'],
+	[0x03, 'Nidoran M'],
+	[0x04, 'Clefairy'],
+	[0x05, 'Spearow'],
+	[0x06, 'Voltorb'],
+	[0x07, 'Nidoking'],
+	[0x08, 'Slowbro'],
 	[0x09, 'Ivysaur'],
-	[0x9a, 'Venusaur'],
-	[0xb0, 'Charmander'],
-	[0xb2, 'Charmeleon'],
-	[0xb4, 'Charizard'],
-	[0xb1, 'Squirtle'],
-	[0xb3, 'Wartortle'],
+	[0x0a, 'Exeggutor'],
+	[0x0b, 'Lickitung'],
+	[0x0c, 'Exeggcute'],
+	[0x0d, 'Grimer'],
+	[0x0e, 'Gengar'],
+	[0x0f, 'Nidoran F'],
+	[0x10, 'Nidoqueen'],
+	[0x11, 'Cubone'],
+	[0x12, 'Rhyhorn'],
+	[0x13, 'Lapras'],
+	[0x14, 'Arcanine'],
+	[0x15, 'Mew'],
+	[0x16, 'Gyarados'],
+	[0x17, 'Shellder'],
+	[0x18, 'Tentacool'],
+	[0x19, 'Gastly'],
+	[0x1a, 'Scyther'],
+	[0x1b, 'Staryu'],
 	[0x1c, 'Blastoise'],
-	[0x7b, 'Caterpie'],
-	[0x7c, 'Metapod'],
-	[0x7d, 'Butterfree'],
+	[0x1d, 'Pinsir'],
+	[0x1e, 'Tangela'],
+	[0x21, 'Growlithe'],
+	[0x22, 'Onix'],
+	[0x23, 'Fearow'],
+	[0x24, 'Pidgey'],
+	[0x25, 'Slowpoke'],
+	[0x26, 'Kadabra'],
+	[0x27, 'Graveler'],
+	[0x28, 'Chansey'],
+	[0x29, 'Machoke'],
+	[0x2a, 'Mr. Mime'],
+	[0x2b, 'Hitmonlee'],
+	[0x2c, 'Hitmonchan'],
+	[0x2d, 'Arbok'],
+	[0x2e, 'Parasect'],
+	[0x2f, 'Psyduck'],
+	[0x30, 'Drowzee'],
+	[0x31, 'Golem'],
+	[0x33, 'Magmar'],
+	[0x35, 'Electabuzz'],
+	[0x36, 'Magneton'],
+	[0x37, 'Koffing'],
+	[0x39, 'Mankey'],
+	[0x3a, 'Seel'],
+	[0x3b, 'Diglett'],
+	[0x3c, 'Tauros'],
+	[0x40, "Farfetch'd"],
+	[0x41, 'Venonat'],
+	[0x42, 'Dragonite'],
+	[0x46, 'Doduo'],
+	[0x47, 'Poliwag'],
+	[0x48, 'Jynx'],
+	[0x49, 'Moltres'],
+	[0x4a, 'Articuno'],
+	[0x4b, 'Zapdos'],
+	[0x4c, 'Ditto'],
+	[0x4d, 'Meowth'],
+	[0x4e, 'Krabby'],
+	[0x52, 'Vulpix'],
+	[0x53, 'Ninetales'],
+	[0x54, 'Pikachu'],
+	[0x55, 'Raichu'],
+	[0x58, 'Dratini'],
+	[0x59, 'Dragonair'],
+	[0x5a, 'Kabuto'],
+	[0x5b, 'Kabutops'],
+	[0x5c, 'Horsea'],
+	[0x5d, 'Seadra'],
+	[0x60, 'Sandshrew'],
+	[0x61, 'Sandslash'],
+	[0x62, 'Omanyte'],
+	[0x63, 'Omastar'],
+	[0x64, 'Jigglypuff'],
+	[0x65, 'Wigglytuff'],
+	[0x66, 'Eevee'],
+	[0x67, 'Flareon'],
+	[0x68, 'Jolteon'],
+	[0x69, 'Vaporeon'],
+	[0x6a, 'Machop'],
+	[0x6b, 'Zubat'],
+	[0x6c, 'Ekans'],
+	[0x6d, 'Paras'],
+	[0x6e, 'Poliwhirl'],
+	[0x6f, 'Poliwrath'],
 	[0x70, 'Weedle'],
 	[0x71, 'Kakuna'],
 	[0x72, 'Beedrill'],
-	[0x24, 'Pidgey'],
+	[0x74, 'Dodrio'],
+	[0x75, 'Primeape'],
+	[0x76, 'Dugtrio'],
+	[0x77, 'Venomoth'],
+	[0x78, 'Dewgong'],
+	[0x7b, 'Caterpie'],
+	[0x7c, 'Metapod'],
+	[0x7d, 'Butterfree'],
+	[0x7e, 'Machamp'],
+	[0x80, 'Golduck'],
+	[0x81, 'Hypno'],
+	[0x82, 'Golbat'],
+	[0x83, 'Mewtwo'],
+	[0x84, 'Snorlax'],
+	[0x85, 'Magikarp'],
+	[0x88, 'Muk'],
+	[0x8a, 'Kingler'],
+	[0x8b, 'Cloyster'],
+	[0x8d, 'Electrode'],
+	[0x8e, 'Clefable'],
+	[0x8f, 'Weezing'],
+	[0x90, 'Persian'],
+	[0x91, 'Marowak'],
+	[0x93, 'Haunter'],
+	[0x94, 'Abra'],
+	[0x95, 'Alakazam'],
 	[0x96, 'Pidgeotto'],
 	[0x97, 'Pidgeot'],
+	[0x98, 'Starmie'],
+	[0x99, 'Bulbasaur'],
+	[0x9a, 'Venusaur'],
+	[0x9b, 'Tentacruel'],
+	[0x9d, 'Goldeen'],
+	[0x9e, 'Seaking'],
+	[0xa3, 'Ponyta'],
+	[0xa4, 'Rapidash'],
 	[0xa5, 'Rattata'],
 	[0xa6, 'Raticate'],
-	[0x05, 'Charmeleon'], // duplicate guard placeholder
-	[0x23, 'Pikachu'],
-	[0xa8, 'Raichu'],
-	[0x60, 'Mewtwo'],
-	[0x62, 'Mew'],
-]);
-
-// Move IDs (partial) for display names
-const MOVE_NAME_MAP: ReadonlyMap<number, string> = new Map([
-	[0x00, '(none)'],
-	[0x01, 'Pound'],
-	[0x02, 'Karate Chop'],
-	[0x03, 'DoubleSlap'],
-	[0x04, 'Comet Punch'],
-	[0x05, 'Mega Punch'],
-	[0x0a, 'Scratch'],
-	[0x0b, 'Vice Grip'],
-	[0x0d, 'Wing Attack'],
-	[0x0e, 'Whirlwind'],
-	[0x11, 'Tackle'],
-	[0x12, 'Body Slam'],
-	[0x14, 'Slash'],
-	[0x18, 'Water Gun'],
-	[0x19, 'Hydro Pump'],
-	[0x1a, 'Surf'],
-	[0x1b, 'Ice Beam'],
-	[0x1c, 'Blizzard'],
-	[0x1d, 'Psybeam'],
-	[0x1e, 'BubbleBeam'],
-	[0x21, 'Thunder'],
-	[0x22, 'Rock Throw'],
-	[0x24, 'Earthquake'],
-	[0x27, 'Dig'],
-	[0x29, 'Toxic'],
-	[0x2c, 'Agility'],
-	[0x2d, 'Quick Attack'],
-	[0x2e, 'Rage'],
-	[0x31, 'Teleport'],
-	[0x32, 'Night Shade'],
-	[0x33, 'Mimic'],
-	[0x34, 'Screech'],
-	[0x39, 'Thunderbolt'],
-	[0x3a, 'Thunder Wave'],
-	[0x3d, 'Ember'],
-	[0x3e, 'Flamethrower'],
-	[0x41, 'Fire Blast'],
-	[0x4d, 'Hyper Beam'],
-	[0x55, 'Psychic'],
-	[0x5e, 'Swords Dance'],
-	[0x62, 'Amnesia'],
-	[0x63, 'Kinesis'],
-	[0x73, 'Fly'],
-	[0xf8, 'Struggle'],
+	[0xa7, 'Nidorino'],
+	[0xa8, 'Nidorina'],
+	[0xa9, 'Geodude'],
+	[0xaa, 'Porygon'],
+	[0xab, 'Aerodactyl'],
+	[0xad, 'Magnemite'],
+	[0xb0, 'Charmander'],
+	[0xb1, 'Squirtle'],
+	[0xb2, 'Charmeleon'],
+	[0xb3, 'Wartortle'],
+	[0xb4, 'Charizard'],
+	[0xb9, 'Oddish'],
+	[0xba, 'Gloom'],
+	[0xbb, 'Vileplume'],
+	[0xbc, 'Bellsprout'],
+	[0xbd, 'Weepinbell'],
+	[0xbe, 'Victreebel'],
 ]);
 
 export function decodeStatus(statusByte: number): { condition: StatusCondition; sleepTurns: number } {
@@ -199,15 +278,28 @@ export function decodeMoves(ram: ReadonlyArray<number>, movesAddr: number, ppAdd
 		const moveId = ram[movesAddr + i] ?? 0;
 		if (moveId === 0) break;
 		const pp = ram[ppAddr + i] ?? 0;
-		moves.push({
-			name: MOVE_NAME_MAP.get(moveId) ?? `Move#${moveId}`,
-			pokemonType: PokemonType.Normal, // move type lookup requires full move table
-			power: 40, // default - real value requires move table
-			accuracy: 100,
-			pp,
-			maxPp: pp, // best estimate without additional data
-			category: 'physical',
-		});
+		const moveInfo = MOVE_TABLE.get(moveId);
+		if (moveInfo) {
+			moves.push({
+				name: moveInfo.name,
+				pokemonType: moveInfo.pokemonType,
+				power: moveInfo.power,
+				accuracy: moveInfo.accuracy,
+				pp,
+				maxPp: moveInfo.basePp,
+				category: moveInfo.category,
+			});
+		} else {
+			moves.push({
+				name: `Move#${moveId}`,
+				pokemonType: PokemonType.Normal,
+				power: 0,
+				accuracy: 100,
+				pp,
+				maxPp: pp,
+				category: 'physical',
+			});
+		}
 	}
 	return moves.length > 0
 		? moves
@@ -304,6 +396,8 @@ export function extractOpponentPokemon(ram: ReadonlyArray<number>): OpponentStat
 
 	return {
 		species: decodeSpecies(ram[ADDR_ENEMY_SPECIES] ?? 0),
+		hp: enemyHp,
+		maxHp: enemyMaxHp > 0 ? enemyMaxHp : 1,
 		hpPercent: Math.round(hpPercent * 10) / 10,
 		status: condition,
 		types: decodeTypes(ram[ADDR_ENEMY_TYPE1] ?? 0, ram[ADDR_ENEMY_TYPE2] ?? 0),
@@ -336,7 +430,7 @@ export function extractBattleState(ram: ReadonlyArray<number>, gameId: string, t
 		turn,
 		phase: BattlePhase.ChooseAction,
 		playerActive,
-		playerParty: [playerActive], // full party requires reading party data
+		playerParty: readParty(ram),
 		opponent,
 		availableActions: buildAvailableActions(playerActive),
 		weather: '',
@@ -398,9 +492,9 @@ export const OVERWORLD_MAX_MENU_ITEM = 0xcc2b; // wMaxMenuItem
 export const SCREEN_TILEMAP_START = 0xc3a0; // wTileMap: 20x18 grid of tile indices
 export const SCREEN_TILEMAP_WIDTH = 20;
 export const SCREEN_TILEMAP_HEIGHT = 18;
-// Dialogue text box: rows 14-15 (the two main text lines inside the box border)
-export const SCREEN_TEXT_ROW_START = 14;
-export const SCREEN_TEXT_ROW_COUNT = 2;
+// Dialogue text box: rows 13-16 (four text lines inside the box border at rows 12/17)
+export const SCREEN_TEXT_ROW_START = 13;
+export const SCREEN_TEXT_ROW_COUNT = 4;
 
 // Sprite data offsets within each 16-byte entry
 const SPRITE1_PICTURE_ID = 0; // 0 = no sprite present
@@ -794,8 +888,8 @@ export function readScreenText(ram: ReadonlyArray<number>): string | null {
 	}
 
 	const lines: Array<string> = [];
-	// Read text rows inside the dialogue box (rows 14-15 are the main text area)
-	for (let row = 14; row <= 15; row++) {
+	// Read all 4 text rows inside the dialogue box (rows 13-16, border on rows 12/17)
+	for (let row = 13; row <= 16; row++) {
 		const text = readTilemapRow(ram, row, 1, SCREEN_TILEMAP_WIDTH - 1);
 		if (text.length > 0) {
 			lines.push(text);
@@ -855,11 +949,17 @@ export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 		return GamePhase.Battle;
 	}
 
-	// wJoyIgnore (0xcd6b): non-zero when input is blocked (dialogue, cutscene, text printing)
-	// Note: OVERWORLD_TEXT_DELAY_FLAGS (0xd358) is the text speed SETTING, not a dialogue indicator
-	const joyIgnore = ram[OVERWORLD_JOY_IGNORE] ?? 0;
+	// Check for interactive menu (tilemap cursor arrow scan)
+	if (readMenuState(ram) !== null) {
+		return GamePhase.Menu;
+	}
 
-	if (joyIgnore !== 0) {
+	// wJoyIgnore (0xcd6b): non-zero when input is blocked (dialogue, cutscene, text printing)
+	// wTextBoxID (0xd125): non-zero when a text box or info box is active
+	const joyIgnore = ram[OVERWORLD_JOY_IGNORE] ?? 0;
+	const textBoxId = ram[OVERWORLD_TEXT_BOX_ID] ?? 0;
+
+	if (joyIgnore !== 0 || textBoxId !== 0) {
 		return GamePhase.Dialogue;
 	}
 

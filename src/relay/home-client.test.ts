@@ -93,6 +93,8 @@ const validBattleState = {
 	playerParty: [],
 	opponent: {
 		species: 'Blastoise',
+		hp: 77,
+		maxHp: 120,
 		hpPercent: 64,
 		status: 'none' as const,
 		types: ['water' as const],

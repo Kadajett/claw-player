@@ -149,7 +149,7 @@ describe('extractPlayerPokemon', () => {
 	});
 
 	it('extracts species name for known code', () => {
-		const ram = makeRam({ [ADDR_PLAYER_SPECIES]: 0x23 }); // Pikachu
+		const ram = makeRam({ [ADDR_PLAYER_SPECIES]: 0x54 }); // Pikachu
 		const pokemon = extractPlayerPokemon(ram);
 		expect(pokemon.species).toBe('Pikachu');
 	});

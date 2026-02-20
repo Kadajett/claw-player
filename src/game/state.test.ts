@@ -36,6 +36,8 @@ function makeValidState(overrides?: Partial<BattleState>): BattleState {
 		playerParty: [pokemon],
 		opponent: {
 			species: 'Rattata',
+			hp: 30,
+			maxHp: 30,
 			hpPercent: 100,
 			status: StatusCondition.None,
 			types: [PokemonType.Normal],
