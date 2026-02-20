@@ -1,4 +1,5 @@
 import { MOVE_TABLE } from './move-data.js';
+import { getCombinedEffectiveness } from './type-chart.js';
 import {
 	type BattleAction,
 	BattlePhase,
@@ -1493,13 +1494,19 @@ export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 		return GamePhase.Menu;
 	}
 
-	// wJoyIgnore (0xcd6b): non-zero when input is blocked (dialogue, cutscene, text printing)
+	// wLetterPrintingDelayFlags (0xd358): non-zero when text is being printed
 	// wTextBoxID (0xd125): non-zero when a text box or info box is active
-	const joyIgnore = ram[OVERWORLD_JOY_IGNORE] ?? 0;
+	const textDelayFlags = ram[OVERWORLD_TEXT_DELAY_FLAGS] ?? 0;
 	const textBoxId = ram[OVERWORLD_TEXT_BOX_ID] ?? 0;
 
-	if (joyIgnore !== 0 || textBoxId !== 0) {
+	if (textDelayFlags !== 0 || textBoxId !== 0) {
 		return GamePhase.Dialogue;
+	}
+
+	// wJoyIgnore (0xcd6b): non-zero when input is blocked without text = cutscene
+	const joyIgnore = ram[OVERWORLD_JOY_IGNORE] ?? 0;
+	if (joyIgnore !== 0) {
+		return GamePhase.Cutscene;
 	}
 
 	return GamePhase.Overworld;
@@ -1669,4 +1676,181 @@ export function readGameProgress(ram: ReadonlyArray<number>): GameProgress {
  */
 export function readWildEncounterRate(ram: ReadonlyArray<number>): number {
 	return ram[ADDR_GRASS_RATE] ?? 0;
+}
+
+// ─── Unified Game State (Issue #12) ─────────────────────────────────────────
+
+export type MoveEffectivenessEntry = {
+	moveName: string;
+	moveType: PokemonType;
+	effectiveness: number;
+};
+
+export type ActiveBattlePokemon = PokemonState & {
+	battleStats: BattleStats;
+};
+
+export type OpponentBattlePokemon = OpponentState & {
+	battleStats: BattleStats;
+	knownMoves: Array<MoveData>;
+	trainerClass: number;
+	partyCount: number;
+};
+
+export type UnifiedBattleState = {
+	type: 'wild' | 'trainer';
+	turnCount: number;
+	playerActive: ActiveBattlePokemon;
+	opponent: OpponentBattlePokemon;
+	moveEffectiveness: Array<MoveEffectivenessEntry>;
+	statModifiers: {
+		player: StatModifiers;
+		enemy: StatModifiers;
+	};
+	battleStatus: {
+		playerFlags: Array<string>;
+		enemyFlags: Array<string>;
+	};
+	substituteHP: { player: number; enemy: number };
+};
+
+export type UnifiedOverworldState = {
+	tileInFront: { tileId: number; description: string };
+	hmAvailable: HmAvailability;
+	wildEncounterRate: number;
+};
+
+export type UnifiedScreenState = {
+	textBoxActive: boolean;
+	menuState: MenuState | null;
+	menuText: string | null;
+	screenText: string | null;
+};
+
+export type UnifiedGameState = {
+	gameId: string;
+	turn: number;
+	phase: GamePhase;
+	player: {
+		name: string;
+		money: number;
+		badges: number;
+		badgeList: Array<string>;
+		location: { mapId: number; mapName: string; x: number; y: number };
+		direction: Direction;
+		walkBikeSurf: MovementMode;
+	};
+	party: Array<PartyPokemon>;
+	inventory: Array<InventoryItem>;
+	battle: UnifiedBattleState | null;
+	overworld: UnifiedOverworldState | null;
+	screen: UnifiedScreenState;
+	progress: GameProgress;
+};
+
+/**
+ * Extract a comprehensive unified game state from RAM.
+ * Composes all individual extraction functions into one call.
+ * Battle section is null when not in battle; overworld section is null when in battle.
+ */
+export function extractUnifiedGameState(ram: ReadonlyArray<number>, gameId: string, turn: number): UnifiedGameState {
+	const phase = detectGamePhase(ram);
+	const playerInfo = readPlayerInfo(ram);
+	const party = readFullParty(ram);
+	const inventory = readInventory(ram);
+	const progress = readGameProgress(ram);
+	const walkBikeSurf = readMovementMode(ram);
+
+	// Screen state (always populated)
+	const screen: UnifiedScreenState = {
+		textBoxActive: isTextBoxActive(ram),
+		menuState: readMenuState(ram),
+		menuText: readMenuText(ram),
+		screenText: readScreenText(ram),
+	};
+
+	// Battle data (null when not in battle)
+	let battle: UnifiedBattleState | null = null;
+	const battleType = ram[ADDR_BATTLE_TYPE] ?? 0;
+
+	if (battleType !== 0) {
+		const playerActive = extractPlayerPokemon(ram);
+		const playerBattleStats = extractPlayerBattleStats(ram);
+		const opponent = extractOpponentPokemon(ram);
+		const enemyBattleStats = extractEnemyBattleStats(ram);
+		const enemyMoves = extractEnemyMoves(ram);
+
+		const moveEffectiveness: Array<MoveEffectivenessEntry> = playerActive.moves.map((move) => ({
+			moveName: move.name,
+			moveType: move.pokemonType,
+			effectiveness: getCombinedEffectiveness(move.pokemonType, opponent.types),
+		}));
+
+		battle = {
+			type: battleType === 2 ? 'trainer' : 'wild',
+			turnCount: ram[ADDR_BATTLE_TURN_COUNT] ?? 0,
+			playerActive: { ...playerActive, battleStats: playerBattleStats },
+			opponent: {
+				...opponent,
+				battleStats: enemyBattleStats,
+				knownMoves: enemyMoves,
+				trainerClass: readTrainerClass(ram),
+				partyCount: readEnemyPartyCount(ram),
+			},
+			moveEffectiveness,
+			statModifiers: {
+				player: readStatModifiers(ram, ADDR_PLAYER_ATTACK_MOD),
+				enemy: readStatModifiers(ram, ADDR_ENEMY_ATTACK_MOD),
+			},
+			battleStatus: {
+				playerFlags: readBattleStatusFlags(
+					ram,
+					ADDR_PLAYER_BATTLE_STATUS1,
+					ADDR_PLAYER_BATTLE_STATUS2,
+					ADDR_PLAYER_BATTLE_STATUS3,
+				),
+				enemyFlags: readBattleStatusFlags(
+					ram,
+					ADDR_ENEMY_BATTLE_STATUS1,
+					ADDR_ENEMY_BATTLE_STATUS2,
+					ADDR_ENEMY_BATTLE_STATUS3,
+				),
+			},
+			substituteHP: {
+				player: ram[ADDR_PLAYER_SUBSTITUTE_HP] ?? 0,
+				enemy: ram[ADDR_ENEMY_SUBSTITUTE_HP] ?? 0,
+			},
+		};
+	}
+
+	// Overworld data (null when in battle)
+	let overworld: UnifiedOverworldState | null = null;
+	if (battleType === 0) {
+		overworld = {
+			tileInFront: describeTileInFront(ram),
+			hmAvailable: readHmAvailability(ram),
+			wildEncounterRate: readWildEncounterRate(ram),
+		};
+	}
+
+	return {
+		gameId,
+		turn,
+		phase,
+		player: {
+			name: playerInfo.name,
+			money: playerInfo.money,
+			badges: playerInfo.badges,
+			badgeList: playerInfo.badgeList,
+			location: playerInfo.location,
+			direction: playerInfo.direction,
+			walkBikeSurf,
+		},
+		party,
+		inventory,
+		battle,
+		overworld,
+		screen,
+		progress,
+	};
 }
