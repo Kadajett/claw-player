@@ -45,6 +45,22 @@ const validOpponentState = {
 	status: 'none',
 	types: ['water'],
 	level: 38,
+	attack: 83,
+	defense: 100,
+	specialAttack: 85,
+	specialDefense: 85,
+	speed: 78,
+	moves: [
+		{
+			name: 'Hydro Pump',
+			pokemonType: 'water',
+			power: 120,
+			accuracy: 80,
+			pp: 5,
+			maxPp: 5,
+			category: 'special',
+		},
+	],
 };
 
 const validBattleState = {
