@@ -135,12 +135,7 @@ if (config.RELAY_MODE === 'client') {
 	const homeClient = createHomeClient(
 		async (batch) => {
 			for (const vote of batch.votes) {
-				await voteAggregator.recordVote(
-					batch.gameId,
-					batch.tickId,
-					vote.agentId,
-					vote.action as import('./game/types.js').GameAction,
-				);
+				await voteAggregator.recordVote(batch.gameId, batch.tickId, vote.agentId, vote.action);
 			}
 			logger.info(
 				{ tickId: batch.tickId, gameId: batch.gameId, voteCount: batch.votes.length },
@@ -412,12 +407,7 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 			if (aborted) return;
 
 			// Atomic per-agent per-tick dedup via Lua script
-			const dedupResult = await voteAggregator.recordVote(
-				GAME_ID,
-				tickId,
-				auth.agent.agentId,
-				action as import('./game/types.js').GameAction,
-			);
+			const dedupResult = await voteAggregator.recordVote(GAME_ID, tickId, auth.agent.agentId, action);
 
 			logger.debug({ agentId: auth.agent.agentId, action, tickId, status: dedupResult.status }, 'vote recorded');
 

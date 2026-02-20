@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { gameActionSchema } from '../game/types.js';
+
 export const PLANS = ['free', 'standard', 'premium'] as const;
 export type Plan = (typeof PLANS)[number];
 
@@ -18,7 +20,7 @@ export const PLAN_BURST: Record<Plan, number> = {
 // Zod schemas - runtime validation boundaries
 
 export const VoteRequestSchema = z.object({
-	action: z.string().min(1).max(64),
+	action: gameActionSchema,
 	tick: z.number().int().nonnegative().optional(),
 });
 export type VoteRequest = z.infer<typeof VoteRequestSchema>;
