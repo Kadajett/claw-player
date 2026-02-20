@@ -28,7 +28,7 @@ export type HomeClientOptions = {
 type WsLike = {
 	send: (data: string) => void;
 	close: () => void;
-	on: (event: string, listener: (...args: Array<unknown>) => void) => void;
+	addEventListener: (event: string, listener: (event: unknown) => void) => void;
 	readyState: number;
 };
 
@@ -130,27 +130,30 @@ export class HomeClient {
 	}
 
 	private attachSocketListeners(socket: WsLike): void {
-		socket.on('open', () => {
+		socket.addEventListener('open', () => {
 			this.reconnectAttempts = 0;
 			this.logger.info({ url: this.relayUrl }, 'Connected to relay, authenticating');
 			socket.send(JSON.stringify({ secret: this.relaySecret }));
 			this.startHeartbeat();
 		});
 
-		socket.on('message', (rawData: unknown) => {
+		socket.addEventListener('message', (event: unknown) => {
+			// Native WebSocket wraps data in MessageEvent; ws library does too with addEventListener
+			const messageEvent = event as { data?: unknown };
+			const rawData = messageEvent.data ?? event;
 			const raw = typeof rawData === 'string' ? rawData : String(rawData);
 			this.handleRawMessage(raw);
 		});
 
-		socket.on('close', () => {
+		socket.addEventListener('close', () => {
 			this.logger.warn('Relay connection closed');
 			this.clearHeartbeat();
 			this.ws = null;
 			this.scheduleReconnect();
 		});
 
-		socket.on('error', (err: unknown) => {
-			this.logger.error({ err }, 'Relay WebSocket error');
+		socket.addEventListener('error', (event: unknown) => {
+			this.logger.error({ err: event }, 'Relay WebSocket error');
 		});
 	}
 
