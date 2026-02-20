@@ -1,6 +1,6 @@
 import type { Redis } from 'ioredis';
 import { describe, expect, it, vi } from 'vitest';
-import { TOKEN_BUCKET_SCRIPT, runTokenBucket } from './lua-scripts.js';
+import { TOKEN_BUCKET_SCRIPT, VOTE_DEDUP_SCRIPT, runTokenBucket, runVoteDedup } from './lua-scripts.js';
 
 describe('TOKEN_BUCKET_SCRIPT', () => {
 	it('is a non-empty string', () => {
@@ -54,5 +54,66 @@ describe('runTokenBucket', () => {
 		await runTokenBucket(client, 'rl:agent-1', now, 5, 8, 1);
 
 		expect(mockEval).toHaveBeenCalledWith(TOKEN_BUCKET_SCRIPT, 1, 'rl:agent-1', now, 5, 8, 1);
+	});
+});
+
+describe('VOTE_DEDUP_SCRIPT', () => {
+	it('is a non-empty string', () => {
+		expect(typeof VOTE_DEDUP_SCRIPT).toBe('string');
+		expect(VOTE_DEDUP_SCRIPT.length).toBeGreaterThan(0);
+	});
+
+	it('contains key Lua operations', () => {
+		expect(VOTE_DEDUP_SCRIPT).toContain('HGET');
+		expect(VOTE_DEDUP_SCRIPT).toContain('HSET');
+		expect(VOTE_DEDUP_SCRIPT).toContain('ZINCRBY');
+		expect(VOTE_DEDUP_SCRIPT).toContain('EXPIRE');
+	});
+});
+
+describe('runVoteDedup', () => {
+	it('returns new for code 1', async () => {
+		const mockEval = vi.fn().mockResolvedValue(1);
+		const client = { eval: mockEval } as unknown as Redis;
+
+		const result = await runVoteDedup(client, 'agent_votes:g:1', 'votes:g:1', 'agent-1', 'move:0', 3600);
+
+		expect(result.status).toBe('new');
+		expect(mockEval).toHaveBeenCalledOnce();
+	});
+
+	it('returns duplicate for code 0', async () => {
+		const mockEval = vi.fn().mockResolvedValue(0);
+		const client = { eval: mockEval } as unknown as Redis;
+
+		const result = await runVoteDedup(client, 'agent_votes:g:1', 'votes:g:1', 'agent-1', 'move:0', 3600);
+
+		expect(result.status).toBe('duplicate');
+	});
+
+	it('returns changed for code 2', async () => {
+		const mockEval = vi.fn().mockResolvedValue(2);
+		const client = { eval: mockEval } as unknown as Redis;
+
+		const result = await runVoteDedup(client, 'agent_votes:g:1', 'votes:g:1', 'agent-1', 'move:1', 3600);
+
+		expect(result.status).toBe('changed');
+	});
+
+	it('passes correct arguments to eval with 2 keys', async () => {
+		const mockEval = vi.fn().mockResolvedValue(1);
+		const client = { eval: mockEval } as unknown as Redis;
+
+		await runVoteDedup(client, 'agent_votes:g:5', 'votes:g:5', 'agent-42', 'run', 7200);
+
+		expect(mockEval).toHaveBeenCalledWith(
+			VOTE_DEDUP_SCRIPT,
+			2,
+			'agent_votes:g:5',
+			'votes:g:5',
+			'agent-42',
+			'run',
+			7200,
+		);
 	});
 });

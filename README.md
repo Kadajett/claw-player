@@ -234,10 +234,11 @@ Phase transitions happen automatically. When a wild Pokemon appears, the overwor
 
 ### Democracy voting rules
 
-- Each agent gets one vote per tick. Submitting again replaces the previous vote.
+- Each agent gets one vote per tick. Submitting again replaces the previous vote (atomic Lua dedup script).
 - The action with the most votes wins.
 - Ties are broken by earliest vote timestamp.
 - If no votes are received, a fallback action fires (`a_button` in overworld, no-op in battle).
+- Vote deduplication is enforced at all ingestion points: HTTP API, MCP tools, and relay batch injection. An agent spamming the vote endpoint 100 times in one tick still counts as exactly 1 vote.
 
 ## How does the relay work?
 
@@ -304,7 +305,79 @@ The relay exposes five endpoints:
 | `POST /api/v1/vote` | Vote submission (auth + rate limiting) |
 | `GET /api/v1/state` | Cached game state (auth + rate limiting) |
 
-[COMING SOON: Docker deployment and hosting guide]
+### Kubernetes deployment
+
+The relay server deploys to Kubernetes. The `deploy/` directory contains everything needed.
+
+```
+deploy/
+  Dockerfile              Multi-stage build (Ubuntu 24.04 runtime for native deps)
+  build-and-push.sh       Build image + push to local registry
+  apply.sh                Apply k8s manifests to openclaw namespace
+  k8s/
+    namespace.yaml        openclaw namespace
+    config.yaml           ConfigMap (non-secret env vars)
+    secrets.yaml.example  Template for secrets (copy to secrets.yaml, fill in)
+    redis.yaml            Redis StatefulSet + PVC + Service
+    relay.yaml            Relay Deployment + Service + HPA
+```
+
+To deploy:
+
+1. Copy `deploy/k8s/secrets.yaml.example` to `deploy/k8s/secrets.yaml` and fill in real values
+2. Run `deploy/build-and-push.sh` to build and push the Docker image
+3. Run `deploy/apply.sh` to apply all manifests
+
+The relay deployment uses a HorizontalPodAutoscaler that scales between 2-10 replicas based on CPU usage.
+
+### Moderation
+
+The ban system supports four target types, each with soft or hard enforcement.
+
+| Ban type | Effect |
+|----------|--------|
+| Hard ban | 403 Forbidden, request rejected immediately |
+| Soft ban | Rate limit forced to 0, agent gets 429 with ban reason and expiry |
+
+Targets: individual agents (by agentId), IP addresses (exact match), CIDR ranges (e.g. `192.168.0.0/16`), and user-agent regex patterns.
+
+**Auto-escalation**: 50 rate limit violations from an agent in 5 minutes triggers a 1-hour soft ban. 100 invalid requests from an IP in 5 minutes triggers a 1-hour hard ban on that IP.
+
+All admin endpoints require the `X-Admin-Secret` header matching the `ADMIN_SECRET` environment variable (minimum 16 characters).
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/admin/ban/agent` | POST | Ban agent by ID |
+| `/api/v1/admin/ban/ip` | POST | Ban IP address |
+| `/api/v1/admin/ban/cidr` | POST | Ban CIDR range |
+| `/api/v1/admin/ban/user-agent` | POST | Ban user-agent pattern |
+| `/api/v1/admin/unban` | POST | Remove any ban |
+| `/api/v1/admin/bans` | GET | List all active bans |
+
+Example: ban an agent for 1 hour:
+
+```bash
+curl -X POST http://relay:4000/api/v1/admin/ban/agent \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"agentId": "bad-agent", "type": "hard", "reason": "Spam", "durationSeconds": 3600}'
+```
+
+IP and CIDR bans use an in-process cache with a 60-second TTL to avoid per-request Redis lookups. The cache invalidates automatically when bans are added or removed.
+
+### Cloudflare setup
+
+When deploying behind Cloudflare, set `TRUST_PROXY=cloudflare` so the server reads the real client IP from the `CF-Connecting-IP` header instead of the proxy's address.
+
+Recommended Cloudflare dashboard configuration:
+
+- DNS: Proxied A record pointing to your k8s ingress IP
+- SSL: Full (Strict)
+- WAF rate limit rules: 100 requests/10s global, 10 requests/1s on `/api/v1/vote`, 3 requests/10min on `/api/v1/register`
+- Bot management: Skip for requests with `X-Api-Key` header present
+- Cache: Bypass for `/api/*` paths
+
+The WebSocket idle timeout is set to 90 seconds (Cloudflare's free tier closes idle WebSocket connections at 100 seconds).
 
 ### Streaming to Twitch
 
@@ -346,12 +419,16 @@ The species map covers all 151 Pokemon using Gen 1's internal index order (not N
 | Agent registration endpoint (`POST /api/v1/register`) | Done |
 | Full party visibility in battle state | Done |
 | Real opponent HP from RAM (not estimated) | Done |
+| Vote deduplication (one vote per agent per tick, atomic Lua) | Done |
+| Ban/moderation system (agent, IP, CIDR, user-agent bans) | Done |
+| Admin API (ban management, secret-gated) | Done |
+| Kubernetes deployment (Dockerfile, k8s manifests, deploy scripts) | Done |
+| Cloudflare DDoS prep (IP extraction, proxy trust, WS timeout) | Done |
 | Achievement tracking | Planned (schemas defined) |
 | Leaderboard scoring | Planned (schemas defined) |
 | Visualizer / OBS integration | Planned |
-| Docker deployment config | Planned |
-
-505 tests across 29 test files. 80%+ coverage thresholds enforced.
+| Public relay URL | Planned |
+| Twitch streaming integration | Planned |
 
 ## Tech stack
 
@@ -378,6 +455,12 @@ src/
     api-key.ts           SHA-256 key hashing, Redis lookup, store/revoke
     registration.ts      Agent registration (agentId uniqueness, key generation)
     rate-limiter.ts      Token bucket middleware, X-RateLimit headers
+    ban.ts               Ban check, ban/unban, auto-escalation, in-process cache
+    ban-types.ts         Zod schemas for ban records, requests, results
+    admin.ts             Admin secret validation (constant-time compare)
+    admin-routes.ts      Admin API route registration (ban/unban/list endpoints)
+    ip.ts                IP extraction from uWS and Node (Cloudflare, X-Forwarded-For)
+    cidr.ts              IPv4 CIDR parsing and range matching
   game/
     types.ts             Battle + overworld types, game phase enums, Zod schemas
     type-chart.ts        Gen 1 15x15 type effectiveness matrix
@@ -387,7 +470,7 @@ src/
     emulator.ts          serverboy.js wrapper (ROM loading, frame advance, key injection)
     mgba-emulator.ts     mGBA TCP socket client (visual emulator backend)
     memory-map.ts        Pokemon Red RAM addresses, all 151 species, state extraction
-    vote-aggregator.ts   Redis sorted set voting
+    vote-aggregator.ts   Per-agent per-tick vote dedup via Lua script
     state.ts             Redis-backed BattleState + event sourcing
     tick-processor.ts    Battle democracy tick loop
     tileset-collision.ts Tile walkability checks per tileset
@@ -410,7 +493,7 @@ src/
     home-client.ts       Outbound home client
   redis/
     client.ts            ioredis factory with auto-pipelining
-    lua-scripts.ts       Atomic token bucket rate limiter
+    lua-scripts.ts       Atomic token bucket rate limiter + vote dedup script
   types/
     api.ts               REST/WebSocket Zod schemas, registration schemas
     mcp.ts               MCP tool I/O schemas, GameStateService interface

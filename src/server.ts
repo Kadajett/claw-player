@@ -3,7 +3,10 @@ import uWS from 'uWebSockets.js';
 
 import type { HttpRequest, HttpResponse, us_listen_socket } from 'uWebSockets.js';
 
+import { registerAdminRoutes } from './auth/admin-routes.js';
 import { lookupApiKey } from './auth/api-key.js';
+import { checkAutoEscalation, checkBan, recordViolation } from './auth/ban.js';
+import { extractIpFromUws } from './auth/ip.js';
 import { checkRateLimit, getRateLimitBurst } from './auth/rate-limiter.js';
 import { registerAgent } from './auth/registration.js';
 import { loadConfig } from './config.js';
@@ -132,11 +135,16 @@ if (config.RELAY_MODE === 'client') {
 	const homeClient = createHomeClient(
 		async (batch) => {
 			for (const vote of batch.votes) {
-				await redis.zincrby('tick:current:votes', 1, vote.action);
+				await voteAggregator.recordVote(
+					batch.gameId,
+					batch.tickId,
+					vote.agentId,
+					vote.action as import('./game/types.js').BattleAction,
+				);
 			}
 			logger.info(
 				{ tickId: batch.tickId, gameId: batch.gameId, voteCount: batch.votes.length },
-				'Relay vote batch injected into local aggregator',
+				'Relay vote batch injected via dedup aggregator',
 			);
 		},
 		async () => {
@@ -192,14 +200,50 @@ type AuthResult = {
 	remaining: number;
 };
 
-async function authenticateAndRateLimit(res: HttpResponse, rawKey: string): Promise<AuthResult | null> {
-	if (!rawKey) {
+type RequestContext = { rawKey: string; ip: string; userAgent: string };
+
+/** Extract request context synchronously (uWS req is only valid during the sync handler). */
+function extractRequestContext(res: HttpResponse, req: HttpRequest): RequestContext {
+	return {
+		rawKey: req.getHeader('x-api-key'),
+		ip: extractIpFromUws(res, req, config.TRUST_PROXY),
+		userAgent: req.getHeader('user-agent'),
+	};
+}
+
+async function authenticateAndRateLimit(res: HttpResponse, ctx: RequestContext): Promise<AuthResult | null> {
+	if (!ctx.rawKey) {
 		sendJson(res, 401, { error: 'Missing API key', code: 'MISSING_AUTH' });
 		return null;
 	}
-	const agent = await lookupApiKey(redis, rawKey);
+	const agent = await lookupApiKey(redis, ctx.rawKey);
 	if (!agent) {
 		sendJson(res, 401, { error: 'Invalid API key', code: 'INVALID_AUTH' });
+		return null;
+	}
+
+	// Ban check (after auth, before rate limit)
+	const banResult = await checkBan(redis, agent.agentId, ctx.ip, ctx.userAgent, logger);
+
+	if (banResult.banned) {
+		if (banResult.type === 'hard') {
+			sendJson(res, 403, { error: 'Banned', code: 'BANNED', reason: banResult.reason });
+			return null;
+		}
+		// Soft ban: 429 with ban reason
+		res.cork(() => {
+			res
+				.writeStatus('429 Too Many Requests')
+				.writeHeader('Content-Type', 'application/json')
+				.end(
+					JSON.stringify({
+						error: 'Temporarily banned',
+						code: 'SOFT_BANNED',
+						reason: banResult.reason,
+						expiresAt: banResult.expiresAt,
+					}),
+				);
+		});
 		return null;
 	}
 
@@ -207,6 +251,17 @@ async function authenticateAndRateLimit(res: HttpResponse, rawKey: string): Prom
 	const rlResult = await checkRateLimit(redis, agent.agentId, agent.rpsLimit, burst);
 
 	if (!rlResult.allowed) {
+		// Track rate limit violations for auto-escalation
+		await recordViolation(redis, agent.agentId, 'rateLimitHit');
+		await checkAutoEscalation(
+			redis,
+			agent.agentId,
+			ctx.ip,
+			config.AUTO_BAN_RATE_LIMIT_THRESHOLD,
+			config.AUTO_BAN_INVALID_REQUEST_THRESHOLD,
+			logger,
+		);
+
 		res.cork(() => {
 			res
 				.writeStatus('429 Too Many Requests')
@@ -287,14 +342,14 @@ app.post('/api/v1/register', (res: HttpResponse, req: HttpRequest) => {
 });
 
 app.get('/api/v1/state', (res: HttpResponse, req: HttpRequest) => {
-	const rawKey = req.getHeader('x-api-key');
+	const ctx = extractRequestContext(res, req);
 	let aborted = false;
 	res.onAborted(() => {
 		aborted = true;
 	});
 
 	(async () => {
-		const auth = await authenticateAndRateLimit(res, rawKey);
+		const auth = await authenticateAndRateLimit(res, ctx);
 		if (!auth || aborted) return;
 
 		const rawState = await redis.get('game:state:default');
@@ -320,7 +375,7 @@ app.get('/api/v1/state', (res: HttpResponse, req: HttpRequest) => {
 });
 
 app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
-	const rawKey = req.getHeader('x-api-key');
+	const ctx = extractRequestContext(res, req);
 	let aborted = false;
 	res.onAborted(() => {
 		aborted = true;
@@ -328,7 +383,7 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 
 	readBody(res)
 		.then(async (bodyStr) => {
-			const auth = await authenticateAndRateLimit(res, rawKey);
+			const auth = await authenticateAndRateLimit(res, ctx);
 			if (!auth || aborted) return;
 
 			let body: unknown;
@@ -349,14 +404,22 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 				return;
 			}
 
-			const { action, tick } = parsed.data;
-			const tickKey = `tick:${tick ?? 'current'}:votes`;
-			await redis.zincrby(tickKey, 1, action);
+			const { action } = parsed.data;
 
-			const currentTick = Number((await redis.get('game:tick')) ?? '0');
+			// Get current tick from game state
+			const state = await stateManager.loadState(GAME_ID);
+			const tickId = state?.turn ?? 0;
 			if (aborted) return;
 
-			logger.debug({ agentId: auth.agent.agentId, action, tick: currentTick }, 'vote recorded');
+			// Atomic per-agent per-tick dedup via Lua script
+			const dedupResult = await voteAggregator.recordVote(
+				GAME_ID,
+				tickId,
+				auth.agent.agentId,
+				action as import('./game/types.js').BattleAction,
+			);
+
+			logger.debug({ agentId: auth.agent.agentId, action, tickId, status: dedupResult.status }, 'vote recorded');
 
 			res.cork(() => {
 				res
@@ -364,7 +427,7 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 					.writeHeader('Content-Type', 'application/json')
 					.writeHeader('X-RateLimit-Limit', String(auth.agent.rpsLimit))
 					.writeHeader('X-RateLimit-Remaining', String(auth.remaining))
-					.end(JSON.stringify({ accepted: true, tick: currentTick, action }));
+					.end(JSON.stringify({ accepted: true, tick: tickId, action, voteStatus: dedupResult.status }));
 			});
 		})
 		.catch((err: unknown) => {
@@ -375,7 +438,7 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 
 app.ws<Record<string, never>>('/agent/stream', {
 	compression: uWS.DISABLED,
-	idleTimeout: 120,
+	idleTimeout: 90,
 	maxBackpressure: 64 * 1024,
 	maxPayloadLength: 4 * 1024,
 
@@ -427,6 +490,16 @@ app.ws<Record<string, never>>('/agent/stream', {
 	close: () => {
 		logger.debug('WebSocket client disconnected');
 	},
+});
+
+// ─── Admin Routes ───────────────────────────────────────────────────────────
+
+registerAdminRoutes(app, {
+	redis,
+	logger: logger.child({ module: 'admin' }),
+	adminSecret: config.ADMIN_SECRET,
+	sendJson,
+	readBody,
 });
 
 let listenSocket: us_listen_socket | null = null;

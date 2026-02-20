@@ -2,6 +2,8 @@ import type { IncomingMessage } from 'node:http';
 import type { Redis } from 'ioredis';
 import pino from 'pino';
 import { lookupApiKey } from '../auth/api-key.js';
+import { checkBan } from '../auth/ban.js';
+import { extractIpFromNode } from '../auth/ip.js';
 import type { ApiKeyValidationResult } from '../types/mcp.js';
 
 const logger = pino({ name: 'mcp-auth' });
@@ -20,6 +22,18 @@ export async function validateApiKey(req: IncomingMessage, redis: Redis): Promis
 		if (agent === null) {
 			logger.warn('Unknown API key');
 			return { valid: false, reason: 'Invalid API key' };
+		}
+
+		// Ban check
+		// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature
+		const trustProxy = (process.env['TRUST_PROXY'] as 'none' | 'cloudflare' | 'any') ?? 'none';
+		const ip = extractIpFromNode(req, trustProxy);
+		const userAgent = req.headers['user-agent'] ?? '';
+		const banResult = await checkBan(redis, agent.agentId, ip, userAgent, logger);
+
+		if (banResult.banned) {
+			logger.warn({ agentId: agent.agentId, banType: banResult.type }, 'Banned agent attempted MCP access');
+			return { valid: false, reason: `Banned: ${banResult.reason}` };
 		}
 
 		logger.debug({ agentId: agent.agentId }, 'API key validated');

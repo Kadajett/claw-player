@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 
+import { type VoteDedupResult, runVoteDedup } from '../redis/lua-scripts.js';
 import {
 	type BattleAction,
 	DEFAULT_FALLBACK_ACTION,
@@ -10,6 +11,7 @@ import {
 } from './types.js';
 
 const VOTES_KEY_PREFIX = 'votes:';
+const AGENT_VOTES_KEY_PREFIX = 'agent_votes:';
 
 export class VoteAggregator {
 	private readonly redis: Redis;
@@ -24,13 +26,18 @@ export class VoteAggregator {
 		return `${VOTES_KEY_PREFIX}${gameId}:${tickId}`;
 	}
 
-	async recordVote(gameId: string, tickId: number, action: BattleAction): Promise<void> {
-		const key = this.voteKey(gameId, tickId);
-		const pipeline = this.redis.pipeline();
-		pipeline.zadd(key, 'INCR', 1, action);
-		pipeline.expire(key, VOTE_KEY_EXPIRY_SECONDS);
-		await pipeline.exec();
-		this.logger.debug({ gameId, tickId, action }, 'Vote recorded');
+	agentVoteKey(gameId: string, tickId: number): string {
+		return `${AGENT_VOTES_KEY_PREFIX}${gameId}:${tickId}`;
+	}
+
+	async recordVote(gameId: string, tickId: number, agentId: string, action: BattleAction): Promise<VoteDedupResult> {
+		const tallyKey = this.voteKey(gameId, tickId);
+		const agentKey = this.agentVoteKey(gameId, tickId);
+
+		const result = await runVoteDedup(this.redis, agentKey, tallyKey, agentId, action, VOTE_KEY_EXPIRY_SECONDS);
+
+		this.logger.debug({ gameId, tickId, agentId, action, status: result.status }, 'Vote recorded');
+		return result;
 	}
 
 	async tallyVotes(gameId: string, tickId: number): Promise<VoteResult> {
@@ -68,8 +75,9 @@ export class VoteAggregator {
 	}
 
 	async clearVotes(gameId: string, tickId: number): Promise<void> {
-		const key = this.voteKey(gameId, tickId);
-		await this.redis.del(key);
+		const tallyKey = this.voteKey(gameId, tickId);
+		const agentKey = this.agentVoteKey(gameId, tickId);
+		await this.redis.del(tallyKey, agentKey);
 		this.logger.debug({ gameId, tickId }, 'Votes cleared');
 	}
 

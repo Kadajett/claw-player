@@ -24,6 +24,13 @@ const envSchema = z.object({
 	EMULATOR_BACKEND: z.enum(['serverboy', 'mgba']).default('serverboy'),
 	MGBA_HOST: z.string().default('127.0.0.1'),
 	MGBA_PORT: z.coerce.number().int().positive().default(8888),
+	// Admin API secret for ban management endpoints
+	ADMIN_SECRET: z.string().min(16).optional(),
+	// Proxy trust: 'none' (direct), 'cloudflare' (CF-Connecting-IP), 'any' (X-Forwarded-For)
+	TRUST_PROXY: z.enum(['none', 'cloudflare', 'any']).default('none'),
+	// Auto-escalation thresholds (violations in 5-minute window)
+	AUTO_BAN_RATE_LIMIT_THRESHOLD: z.coerce.number().int().positive().default(50),
+	AUTO_BAN_INVALID_REQUEST_THRESHOLD: z.coerce.number().int().positive().default(100),
 });
 
 export type Config = z.infer<typeof envSchema>;

@@ -3,7 +3,10 @@ import type { Logger } from 'pino';
 import uWS from 'uWebSockets.js';
 import type { HttpRequest, HttpResponse, WebSocket, us_listen_socket } from 'uWebSockets.js';
 
+import { registerAdminRoutes } from '../auth/admin-routes.js';
 import { lookupApiKey } from '../auth/api-key.js';
+import { checkAutoEscalation, checkBan, recordViolation } from '../auth/ban.js';
+import { extractIpFromUws } from '../auth/ip.js';
 import { checkRateLimit, getRateLimitBurst } from '../auth/rate-limiter.js';
 import { registerAgent } from '../auth/registration.js';
 import { createLogger } from '../logger.js';
@@ -440,18 +443,44 @@ export class RelayServer {
 
 // ─── Standalone Entry Point ───────────────────────────────────────────────────
 
+type RelayRequestContext = { rawKey: string; ip: string; userAgent: string };
+
 async function relayAuthAndRateLimit(
 	res: HttpResponse,
-	rawKey: string,
+	ctx: RelayRequestContext,
 	redis: import('ioredis').Redis,
+	relayLogger?: import('pino').Logger,
 ): Promise<{ agent: import('../types/api.js').ApiKeyMetadata } | null> {
-	if (!rawKey) {
+	if (!ctx.rawKey) {
 		sendJson(res, 401, { error: 'Missing API key', code: 'MISSING_AUTH' });
 		return null;
 	}
-	const agent = await lookupApiKey(redis, rawKey);
+	const agent = await lookupApiKey(redis, ctx.rawKey);
 	if (!agent) {
 		sendJson(res, 401, { error: 'Invalid API key', code: 'INVALID_AUTH' });
+		return null;
+	}
+
+	// Ban check
+	const banResult = await checkBan(redis, agent.agentId, ctx.ip, ctx.userAgent, relayLogger);
+	if (banResult.banned) {
+		if (banResult.type === 'hard') {
+			sendJson(res, 403, { error: 'Banned', code: 'BANNED', reason: banResult.reason });
+			return null;
+		}
+		res.cork(() => {
+			res
+				.writeStatus('429 Too Many Requests')
+				.writeHeader('Content-Type', 'application/json')
+				.end(
+					JSON.stringify({
+						error: 'Temporarily banned',
+						code: 'SOFT_BANNED',
+						reason: banResult.reason,
+						expiresAt: banResult.expiresAt,
+					}),
+				);
+		});
 		return null;
 	}
 
@@ -459,6 +488,13 @@ async function relayAuthAndRateLimit(
 	const rlResult = await checkRateLimit(redis, agent.agentId, agent.rpsLimit, burst);
 
 	if (!rlResult.allowed) {
+		await recordViolation(redis, agent.agentId, 'rateLimitHit');
+		// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature
+		const rlThreshold = Number(process.env['AUTO_BAN_RATE_LIMIT_THRESHOLD']) || 50;
+		// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature
+		const irThreshold = Number(process.env['AUTO_BAN_INVALID_REQUEST_THRESHOLD']) || 100;
+		await checkAutoEscalation(redis, agent.agentId, ctx.ip, rlThreshold, irThreshold, relayLogger);
+
 		res.cork(() => {
 			res
 				.writeStatus('429 Too Many Requests')
@@ -488,15 +524,26 @@ export async function startRelayServer(): Promise<RelayServer> {
 	const server = new RelayServer(relayConfig.RELAY_SECRET, relayConfig.RELAY_PORT, logger, redis, redisSub);
 	const app = server.getApp();
 
+	// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+	const trustProxy = (process.env['TRUST_PROXY'] as 'none' | 'cloudflare' | 'any') ?? 'none';
+
+	function extractRelayCtx(res: HttpResponse, req: HttpRequest): RelayRequestContext {
+		return {
+			rawKey: req.getHeader('x-api-key'),
+			ip: extractIpFromUws(res, req, trustProxy),
+			userAgent: req.getHeader('user-agent'),
+		};
+	}
+
 	app.get('/api/v1/state', (res: HttpResponse, req: HttpRequest) => {
-		const rawKey = req.getHeader('x-api-key');
+		const ctx = extractRelayCtx(res, req);
 		let aborted = false;
 		res.onAborted(() => {
 			aborted = true;
 		});
 
 		(async () => {
-			const auth = await relayAuthAndRateLimit(res, rawKey, redis);
+			const auth = await relayAuthAndRateLimit(res, ctx, redis, logger);
 			if (!auth || aborted) return;
 
 			const cached = server.getCachedState();
@@ -515,7 +562,7 @@ export async function startRelayServer(): Promise<RelayServer> {
 	});
 
 	app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
-		const rawKey = req.getHeader('x-api-key');
+		const ctx = extractRelayCtx(res, req);
 		let aborted = false;
 		res.onAborted(() => {
 			aborted = true;
@@ -523,7 +570,7 @@ export async function startRelayServer(): Promise<RelayServer> {
 
 		readBody(res)
 			.then(async (bodyStr) => {
-				const auth = await relayAuthAndRateLimit(res, rawKey, redis);
+				const auth = await relayAuthAndRateLimit(res, ctx, redis, logger);
 				if (!auth || aborted) return;
 
 				let body: unknown;
@@ -619,6 +666,16 @@ export async function startRelayServer(): Promise<RelayServer> {
 				logger.error({ err }, 'Error in /api/v1/register handler');
 				if (!aborted) sendJson(res, 500, { error: 'Internal server error' });
 			});
+	});
+
+	// biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+	const adminSecret = process.env['ADMIN_SECRET'];
+	registerAdminRoutes(app, {
+		redis,
+		logger: logger.child({ module: 'admin' }),
+		adminSecret,
+		sendJson,
+		readBody,
 	});
 
 	await server.listen();

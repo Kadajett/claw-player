@@ -9,14 +9,3 @@ data:
   REDIS_URL: "redis://:$(REDIS_PASSWORD)@redis.openclaw.svc.cluster.local:6379"
   LOG_LEVEL: "info"
   NODE_ENV: "production"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: relay-secrets
-  namespace: openclaw
-type: Opaque
-stringData:
-  RELAY_SECRET: "IPLTjKSFA8IuyLQyUlbeaW8w54bycd6-lOzwc9P8LzE"
-  REDIS_PASSWORD: "5VOzoyWd1gUNroy5zYpFh7foV0q57JlB"
-  REGISTRATION_SECRET: "sI_Ta7nqAzujmdiAVAe6R9kGvdD2ADXZ"

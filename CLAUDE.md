@@ -42,6 +42,10 @@
 - Use pino logger, never console.log
 - Indent with tabs (Biome default)
 - Single quotes, trailing commas, semicolons
+- Ban system Redis keys: `ban:agent:{agentId}`, `ban:ip:{ip}`, `ban:cidr` (sorted set), `ban:cidr:meta:{cidr}`, `ban:ua` (set), `violations:{agentId}`
+- Admin API routes: `/api/v1/admin/ban/*` and `/api/v1/admin/bans`, gated by `X-Admin-Secret` header
+- Vote dedup keys: `agent_votes:{gameId}:{tickId}` (hash), `votes:{gameId}:{tickId}` (sorted set)
+- IP extraction respects `TRUST_PROXY` config: 'none' (socket only), 'cloudflare' (CF-Connecting-IP), 'any' (X-Forwarded-For)
 
 ## File Structure
 ```
@@ -49,20 +53,25 @@ src/
   server.ts              - Entry point, server startup
   config.ts              - Environment config with Zod validation
   types/                 - Shared TypeScript types and Zod schemas
-  auth/                  - API key validation, JWT, rate limiting
+  auth/                  - API key validation, JWT, rate limiting, ban system, admin API
   game/
     types.ts             - Pokemon battle types (PokemonState, BattleState, etc.)
     emulator.ts          - serverboy.js wrapper (load ROM, advance frames, inject keys)
     memory-map.ts        - Pokemon Red RAM addresses + state extraction
     battle-engine.ts     - Maps vote actions to GB button presses
-    vote-aggregator.ts   - Redis sorted set voting (ZADD/ZREVRANGE)
+    vote-aggregator.ts   - Per-agent per-tick vote dedup via Lua script
     state.ts             - Redis-backed battle state + event sourcing
     tick-processor.ts    - Democracy tick loop (tally -> press -> extract -> broadcast)
     type-chart.ts        - Gen 1 type effectiveness matrix
   ws/                    - WebSocket connection handling, broadcast
   mcp/                   - MCP server tools and transport
-  redis/                 - Redis client, Lua scripts, connection pool
+  redis/                 - Redis client, Lua scripts (rate limit + vote dedup), connection pool
   stream/                - OBS integration, visualizer state
+deploy/
+  Dockerfile             - Multi-stage build (Ubuntu 24.04 runtime)
+  build-and-push.sh      - Build image + push to local registry
+  apply.sh               - Apply k8s manifests to openclaw namespace
+  k8s/                   - Kubernetes manifests (namespace, config, redis, relay, secrets)
 ```
 
 ## Commands

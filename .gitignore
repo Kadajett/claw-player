@@ -25,3 +25,6 @@ coverage/
 *.ss8
 *.ss9
 roms/
+
+# K8s secrets (real values, never commit)
+deploy/k8s/secrets.yaml

@@ -2,25 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VoteAggregator } from './vote-aggregator.js';
 
-type MockPipeline = {
-	zadd: ReturnType<typeof vi.fn>;
-	expire: ReturnType<typeof vi.fn>;
-	exec: ReturnType<typeof vi.fn>;
-};
-
-function makeMockRedis(overrides?: { zrevrange?: Array<string>; zscore?: string | null }) {
-	const pipeline: MockPipeline = {
-		zadd: vi.fn().mockReturnThis(),
-		expire: vi.fn().mockReturnThis(),
-		exec: vi.fn().mockResolvedValue([]),
-	};
-
+function makeMockRedis(overrides?: { zrevrange?: Array<string>; zscore?: string | null; evalResult?: number }) {
 	return {
-		pipeline: vi.fn().mockReturnValue(pipeline),
+		eval: vi.fn().mockResolvedValue(overrides?.evalResult ?? 1),
 		zrevrange: vi.fn().mockResolvedValue(overrides?.zrevrange ?? []),
 		zscore: vi.fn().mockResolvedValue(overrides?.zscore ?? null),
 		del: vi.fn().mockResolvedValue(1),
-		mockPipeline: pipeline,
 	};
 }
 
@@ -48,18 +35,46 @@ describe('VoteAggregator', () => {
 		});
 	});
 
+	describe('agentVoteKey', () => {
+		it('generates correct key', () => {
+			expect(aggregator.agentVoteKey('game-1', 5)).toBe('agent_votes:game-1:5');
+		});
+	});
+
 	describe('recordVote', () => {
-		it('calls pipeline zadd and expire', async () => {
-			redis = makeMockRedis();
+		it('calls eval with dedup script and correct keys', async () => {
+			redis = makeMockRedis({ evalResult: 1 });
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			aggregator = new VoteAggregator(redis as any, mockLogger as any);
 
-			await aggregator.recordVote('game-1', 3, 'move:0');
+			const result = await aggregator.recordVote('game-1', 3, 'agent-42', 'move:0');
 
-			expect(redis.pipeline).toHaveBeenCalled();
-			expect(redis.mockPipeline.zadd).toHaveBeenCalledWith('votes:game-1:3', 'INCR', 1, 'move:0');
-			expect(redis.mockPipeline.expire).toHaveBeenCalled();
-			expect(redis.mockPipeline.exec).toHaveBeenCalled();
+			expect(redis.eval).toHaveBeenCalledOnce();
+			const args = redis.eval.mock.calls[0];
+			expect(args[1]).toBe(2); // 2 KEYS
+			expect(args[2]).toBe('agent_votes:game-1:3');
+			expect(args[3]).toBe('votes:game-1:3');
+			expect(args[4]).toBe('agent-42');
+			expect(args[5]).toBe('move:0');
+			expect(result.status).toBe('new');
+		});
+
+		it('returns duplicate when agent votes same action', async () => {
+			redis = makeMockRedis({ evalResult: 0 });
+			// biome-ignore lint/suspicious/noExplicitAny: test mock
+			aggregator = new VoteAggregator(redis as any, mockLogger as any);
+
+			const result = await aggregator.recordVote('game-1', 3, 'agent-42', 'move:0');
+			expect(result.status).toBe('duplicate');
+		});
+
+		it('returns changed when agent switches vote', async () => {
+			redis = makeMockRedis({ evalResult: 2 });
+			// biome-ignore lint/suspicious/noExplicitAny: test mock
+			aggregator = new VoteAggregator(redis as any, mockLogger as any);
+
+			const result = await aggregator.recordVote('game-1', 3, 'agent-42', 'move:1');
+			expect(result.status).toBe('changed');
 		});
 	});
 
@@ -117,14 +132,14 @@ describe('VoteAggregator', () => {
 	});
 
 	describe('clearVotes', () => {
-		it('calls redis.del with correct key', async () => {
+		it('calls redis.del with both tally and agent vote keys', async () => {
 			redis = makeMockRedis();
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			aggregator = new VoteAggregator(redis as any, mockLogger as any);
 
 			await aggregator.clearVotes('game-1', 7);
 
-			expect(redis.del).toHaveBeenCalledWith('votes:game-1:7');
+			expect(redis.del).toHaveBeenCalledWith('votes:game-1:7', 'agent_votes:game-1:7');
 		});
 	});
 
