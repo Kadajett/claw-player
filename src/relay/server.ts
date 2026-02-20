@@ -9,7 +9,7 @@ import { checkAutoEscalation, checkBan, recordViolation } from '../auth/ban.js';
 import { extractIpFromUws } from '../auth/ip.js';
 import { checkRateLimit, getRateLimitBurst } from '../auth/rate-limiter.js';
 import { registerAgent } from '../auth/registration.js';
-import { battleActionSchema } from '../game/types.js';
+import { gameActionSchema } from '../game/types.js';
 import { createLogger } from '../logger.js';
 import { createRedisClient, createRedisSubscriber } from '../redis/client.js';
 import { RegisterRequestSchema, VoteRequestSchema } from '../types/api.js';
@@ -137,7 +137,7 @@ export class RelayServer {
 			const entry = JSON.parse(raw) as VoteBufferEntry;
 			return {
 				agentId,
-				// biome-ignore lint/suspicious/noExplicitAny: action is validated as BattleAction at ingestion time
+				// biome-ignore lint/suspicious/noExplicitAny: action is validated as GameAction at ingestion time
 				action: entry.action as any,
 				timestamp: entry.timestamp,
 			};
@@ -474,13 +474,13 @@ function parseVoteBody(bodyStr: string): VoteParseResult {
 	}
 
 	const { action } = parsed.data;
-	const actionResult = battleActionSchema.safeParse(action);
+	const actionResult = gameActionSchema.safeParse(action);
 	if (!actionResult.success) {
 		return {
 			ok: false,
 			statusCode: 400,
 			body: {
-				error: `Invalid action "${action}". Valid actions: move:0, move:1, move:2, move:3, switch:0-5, run`,
+				error: `Invalid action "${action}". Valid actions: up, down, left, right, a, b, start, select`,
 				code: 'INVALID_ACTION',
 			},
 		};

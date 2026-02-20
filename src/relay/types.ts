@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { battleStateSchema } from '../game/types.js';
-import { battleActionSchema } from '../game/types.js';
 import type { BattleState } from '../game/types.js';
+import { battleStateSchema, gameActionSchema } from '../game/types.js';
 
 export type { BattleState };
 
@@ -14,7 +13,7 @@ export const RelayVoteBatchSchema = z.object({
 	votes: z.array(
 		z.object({
 			agentId: z.string(),
-			action: battleActionSchema,
+			action: gameActionSchema,
 			timestamp: z.number().int().positive(),
 		}),
 	),

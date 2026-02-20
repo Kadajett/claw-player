@@ -1,15 +1,8 @@
 import { z } from 'zod';
 
-// Pokemon battle actions
-// move:0-3 = use the attack at that index in the active Pokemon's move list
-// switch:0-5 = swap active Pokemon for the party member at that index
-// run = attempt to flee the battle
-export const PokemonAction = z.union([
-	z.string().regex(/^move:[0-3]$/, 'Use move by index: move:0 through move:3'),
-	z.string().regex(/^switch:[0-5]$/, 'Switch Pokemon by party index: switch:0 through switch:5'),
-	z.literal('run'),
-]);
-export type PokemonAction = z.infer<typeof PokemonAction>;
+// Game actions map directly to Game Boy buttons
+export const GameActionSchema = z.enum(['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select']);
+export type GameActionSchema = z.infer<typeof GameActionSchema>;
 
 // Individual move slot (up to 4 per Pokemon)
 export const Move = z.object({
@@ -118,7 +111,7 @@ export type GetGameStateOutput = GetBattleStateOutput;
 
 // Tool: submit_action
 export const SubmitActionInput = z.object({
-	action: PokemonAction,
+	action: GameActionSchema,
 });
 export type SubmitActionInput = z.infer<typeof SubmitActionInput>;
 
