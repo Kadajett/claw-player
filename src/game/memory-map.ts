@@ -9,6 +9,7 @@ import {
 	GamePhase,
 	type InventoryItem,
 	type MapLocation,
+	type MenuState,
 	type MoveData,
 	type NpcInfo,
 	type OpponentState,
@@ -780,6 +781,21 @@ export const OVERWORLD_TOP_MENU_ITEM_Y = 0xcc24; // wTopMenuItemY
 export const OVERWORLD_TOP_MENU_ITEM_X = 0xcc25; // wTopMenuItemX
 export const OVERWORLD_MAX_MENU_ITEM = 0xcc2b; // wMaxMenuItem
 
+// Menu state RAM addresses (issue #21: pret/pokered WRAM labels)
+export const ADDR_CUR_MENU_ITEM = 0xcc47; // wCurMenuItem: cursor position in current menu
+export const ADDR_CURRENT_MENU_ITEM = 0xcc2a; // wCurrentMenuItem: 0-indexed selected item
+export const ADDR_MAX_MENU_ITEM_21 = 0xcc2c; // wMaxMenuItem: max item index in menu
+export const ADDR_MENU_WATCHED_KEYS = 0xcc2d; // wMenuWatchedKeys: button presses the menu responds to
+export const ADDR_LIST_SCROLL_OFFSET = 0xcc4f; // wListScrollOffset: scroll offset for scrollable lists
+export const ADDR_LETTER_PRINTING_DELAY = 0xcc36; // wLetterPrintingDelayFlags: bit 0 = text still printing
+export const ADDR_TEXT_DEST_LO = 0xcc26; // wTextDestAddrLo: text destination address low byte
+export const ADDR_TEXT_DEST_HI = 0xcc27; // wTextDestAddrHi: text destination address high byte
+export const ADDR_TOP_MENU_ITEM_Y_21 = 0xcc28; // wTopMenuItemY: Y position of top menu item
+export const ADDR_TOP_MENU_ITEM_X_21 = 0xcc29; // wTopMenuItemX: X position of top menu item
+export const ADDR_TILE_BEHIND_CURSOR = 0xcc2b; // wTileBehindCursor: tile under the selector arrow
+export const ADDR_TEXT_BOX_ID = 0xd12c; // wTextBoxID: current text box type (0 = none)
+export const ADDR_TEXT_STATUS_FLAGS = 0xd730; // wd730: bit 6 = text box visible on screen
+
 // Screen tilemap for reading on-screen text
 export const SCREEN_TILEMAP_START = 0xc3a0; // wTileMap: 20x18 grid of tile indices
 export const SCREEN_TILEMAP_WIDTH = 20;
@@ -1356,6 +1372,20 @@ function readTilemapRow(ram: ReadonlyArray<number>, row: number, colStart: numbe
 }
 
 /**
+ * Quick check for whether any text/dialogue box is currently displayed.
+ * Uses wTextBoxID (non-zero = text box active) and wStatusFlags3 bit 6 (text box visible).
+ */
+export function isTextBoxActive(ram: ReadonlyArray<number>): boolean {
+	const textBoxId = ram[ADDR_TEXT_BOX_ID] ?? 0;
+	if (textBoxId !== 0) return true;
+
+	const statusFlags3 = ram[ADDR_TEXT_STATUS_FLAGS] ?? 0;
+	if ((statusFlags3 & 0x40) !== 0) return true; // bit 6
+
+	return false;
+}
+
+/**
  * Read on-screen dialogue text from the bottom of the screen.
  * Dialogue boxes use rows 12-17 (border on 12/17, text on 13-16).
  */
@@ -1385,7 +1415,7 @@ export function readScreenText(ram: ReadonlyArray<number>): string | null {
  * Skips dialogue boxes (no cursor) to avoid duplicating dialogueText.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: full-screen tilemap scan for menu box detection
-export function readMenuState(ram: ReadonlyArray<number>): string | null {
+export function readMenuText(ram: ReadonlyArray<number>): string | null {
 	for (let row = 0; row < SCREEN_TILEMAP_HEIGHT - 2; row++) {
 		for (let col = 0; col < SCREEN_TILEMAP_WIDTH; col++) {
 			const addr = SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH + col;
@@ -1421,6 +1451,36 @@ export function readMenuState(ram: ReadonlyArray<number>): string | null {
 	return null;
 }
 
+/**
+ * Read structured menu state from RAM addresses.
+ * Returns current menu selection, max items, scroll offset, and whether the menu is active.
+ * Uses wCurrentMenuItem, wMaxMenuItem, wListScrollOffset, and wMenuWatchedKeys.
+ */
+export function readMenuState(ram: ReadonlyArray<number>): MenuState | null {
+	const watchedKeys = ram[ADDR_MENU_WATCHED_KEYS] ?? 0;
+	const textBoxId = ram[ADDR_TEXT_BOX_ID] ?? 0;
+	const menuText = readMenuText(ram);
+
+	// Menu is active if watchedKeys is non-zero (menu is listening for input),
+	// or if a text box with a cursor arrow is visible on screen
+	const isActive = watchedKeys !== 0 || menuText !== null;
+
+	if (!isActive && textBoxId === 0) {
+		return null;
+	}
+
+	const currentItem = ram[ADDR_CURRENT_MENU_ITEM] ?? 0;
+	const maxItems = ram[ADDR_MAX_MENU_ITEM_21] ?? 0;
+	const scrollOffset = ram[ADDR_LIST_SCROLL_OFFSET] ?? 0;
+
+	return {
+		currentItem,
+		maxItems,
+		scrollOffset,
+		isActive,
+	};
+}
+
 export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 	// Check battle first (most specific)
 	const battleType = ram[ADDR_BATTLE_TYPE] ?? 0;
@@ -1429,7 +1489,7 @@ export function detectGamePhase(ram: ReadonlyArray<number>): GamePhase {
 	}
 
 	// Check for interactive menu (tilemap cursor arrow scan)
-	if (readMenuState(ram) !== null) {
+	if (readMenuText(ram) !== null) {
 		return GamePhase.Menu;
 	}
 
@@ -1488,7 +1548,7 @@ export function extractOverworldState(ram: ReadonlyArray<number>): OverworldStat
 			inventory: readInventory(ram),
 			party: readParty(ram),
 		},
-		menuOpen: readMenuState(ram),
+		menuOpen: readMenuText(ram),
 		dialogueText: readScreenText(ram),
 		secondsRemaining: 0,
 	};

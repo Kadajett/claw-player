@@ -545,6 +545,22 @@ export const overworldStateSchema = z.object({
 	secondsRemaining: z.number().min(0),
 });
 
+// ─── Menu State ──────────────────────────────────────────────────────────────
+
+export type MenuState = {
+	currentItem: number;
+	maxItems: number;
+	scrollOffset: number;
+	isActive: boolean;
+};
+
+export const menuStateSchema = z.object({
+	currentItem: z.number().int().min(0),
+	maxItems: z.number().int().min(0),
+	scrollOffset: z.number().int().min(0),
+	isActive: z.boolean(),
+});
+
 // ─── Game State (discriminated union) ────────────────────────────────────────
 
 export type GameState = { mode: 'battle'; battle: BattleState } | { mode: 'overworld'; overworld: OverworldState };

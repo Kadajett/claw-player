@@ -221,6 +221,18 @@ export class MgbaEmulator implements GameBoyEmulator {
 			0xcc24,
 			0xcc25,
 			0xcc2b, // wTopMenuItemY, wTopMenuItemX, wMaxMenuItem
+			// Menu state (issue #21)
+			0xcc47, // wCurMenuItem
+			0xcc2a, // wCurrentMenuItem
+			0xcc2c, // wMaxMenuItem (pret address)
+			0xcc4f, // wListScrollOffset
+			0xcc36, // wLetterPrintingDelayFlags
+			0xcc27, // wTextDestAddrHi
+			0xcc28, // wTopMenuItemY (pret address)
+			0xcc29, // wTopMenuItemX (pret address)
+			0xd12c, // wTextBoxID
+			// Text detection (issue #21)
+			0xd730, // wd730: bit 6 = text box visible
 			// Warp data
 			0xd3ae, // wNumberOfWarps
 			// Tileset collision detection
