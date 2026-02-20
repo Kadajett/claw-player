@@ -100,6 +100,7 @@ const gameStateService: LiveGameStateService = createGameStateService({
 	gameId: GAME_ID,
 	tickIntervalMs: config.TICK_INTERVAL_MS,
 	emulator,
+	getCurrentTick: () => unifiedProcessor.getCurrentTick(),
 });
 
 // Start unified tick processor if emulator is ready

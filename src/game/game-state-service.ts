@@ -46,6 +46,7 @@ export type GameStateServiceOptions = {
 	gameId: string;
 	tickIntervalMs: number;
 	emulator: GameBoyEmulator;
+	getCurrentTick?: () => number;
 };
 
 /**
@@ -320,6 +321,7 @@ export class LiveGameStateService implements GameStateService {
 	private readonly gameId: string;
 	private readonly tickIntervalMs: number;
 	private readonly emulator: GameBoyEmulator;
+	private readonly getCurrentTickFn: (() => number) | null;
 
 	private tickStartedAt: number = Date.now();
 
@@ -330,6 +332,7 @@ export class LiveGameStateService implements GameStateService {
 		this.gameId = options.gameId;
 		this.tickIntervalMs = options.tickIntervalMs;
 		this.emulator = options.emulator;
+		this.getCurrentTickFn = options.getCurrentTick ?? null;
 	}
 
 	resetTickTimer(): void {
@@ -426,6 +429,12 @@ export class LiveGameStateService implements GameStateService {
 	}
 
 	private async getCurrentTurn(): Promise<number> {
+		// Prefer the live tick counter from the tick processor (the pending tick).
+		// Falling back to Redis reads the LAST COMPLETED tick, which is always
+		// one behind and causes votes to be recorded for an already-processed tick.
+		if (this.getCurrentTickFn) {
+			return this.getCurrentTickFn();
+		}
 		const raw = await this.redis.get(`game:state:${this.gameId}`);
 		if (!raw) return 0;
 		try {
