@@ -4,6 +4,8 @@ import {
 	ADDR_BATTLE_TURN_COUNT,
 	ADDR_BATTLE_TYPE,
 	ADDR_CRITICAL_OHKO_FLAG,
+	ADDR_CURRENT_MENU_ITEM,
+	ADDR_CUR_MENU_ITEM,
 	ADDR_CUR_OPPONENT,
 	ADDR_ENEMY_ATTACK,
 	ADDR_ENEMY_ATTACK_MOD,
@@ -25,7 +27,11 @@ import {
 	ADDR_IN_BATTLE,
 	ADDR_JOY_HELD,
 	ADDR_JOY_PRESSED,
+	ADDR_LETTER_PRINTING_DELAY,
+	ADDR_LIST_SCROLL_OFFSET,
 	ADDR_MAP_PAL_OFFSET,
+	ADDR_MAX_MENU_ITEM_21,
+	ADDR_MENU_WATCHED_KEYS,
 	ADDR_PARTY_COUNT,
 	ADDR_PARTY_MONS,
 	ADDR_PARTY_NICKNAMES,
@@ -49,7 +55,6 @@ import {
 	ADDR_PLAYER_SPEED_MOD,
 	ADDR_PLAYER_SUBSTITUTE_HP,
 	ADDR_PLAYER_TOXIC_COUNTER,
-	ADDR_TRAINER_CLASS,
 	ADDR_PLAY_TIME_FRAMES,
 	ADDR_PLAY_TIME_HOURS_HIGH,
 	ADDR_PLAY_TIME_HOURS_LOW,
@@ -57,7 +62,15 @@ import {
 	ADDR_PLAY_TIME_SECONDS,
 	ADDR_POKEDEX_OWNED_START,
 	ADDR_POKEDEX_SEEN_START,
+	ADDR_TEXT_BOX_ID,
+	ADDR_TEXT_DEST_HI,
+	ADDR_TEXT_DEST_LO,
+	ADDR_TEXT_STATUS_FLAGS,
+	ADDR_TILE_BEHIND_CURSOR,
 	ADDR_TILE_IN_FRONT_OF_PLAYER,
+	ADDR_TOP_MENU_ITEM_X_21,
+	ADDR_TOP_MENU_ITEM_Y_21,
+	ADDR_TRAINER_CLASS,
 	GRASS_MON_SLOTS,
 	OVERWORLD_BADGES,
 	OVERWORLD_BAG_ITEMS,
@@ -74,6 +87,8 @@ import {
 	OVERWORLD_X_COORD,
 	OVERWORLD_Y_COORD,
 	POKEDEX_BYTES,
+	SCREEN_TILEMAP_START,
+	SCREEN_TILEMAP_WIDTH,
 	buildAvailableActions,
 	decodeBCD,
 	decodeBadgeNames,
@@ -93,6 +108,7 @@ import {
 	extractPlayerBattleStats,
 	extractPlayerPokemon,
 	isInBattle,
+	isTextBoxActive,
 	isTrainerBattle,
 	readBadges,
 	readBattleStatusFlags,
@@ -101,11 +117,14 @@ import {
 	readGameProgress,
 	readHmAvailability,
 	readInventory,
+	readMenuState,
+	readMenuText,
 	readMoney,
 	readNearbySprites,
 	readPlayerInfo,
 	readPlayerName,
 	readPokedexCounts,
+	readScreenText,
 	readStatModifiers,
 	readTrainerClass,
 	readWildEncounterRate,
@@ -1295,6 +1314,7 @@ describe('readEnemyPartyCount', () => {
 	it('returns 0 when not set', () => {
 		const ram = makeRam();
 		expect(readEnemyPartyCount(ram)).toBe(0);
+	});
 });
 
 // ─── HM Detection Address Constants ─────────────────────────────────────────
@@ -2006,5 +2026,335 @@ describe('readFullParty', () => {
 		]);
 		const party = readFullParty(ram);
 		expect(party[0]?.nickname).toBe('SPARKY');
+	});
+});
+
+// ─── Issue #21: Screen text and menu state RAM extraction ────────────────────
+
+describe('isTextBoxActive', () => {
+	it('returns false when no text box is displayed', () => {
+		const ram = makeRam();
+		expect(isTextBoxActive(ram)).toBe(false);
+	});
+
+	it('returns true when wTextBoxID is non-zero', () => {
+		const ram = makeRam({ [ADDR_TEXT_BOX_ID]: 1 });
+		expect(isTextBoxActive(ram)).toBe(true);
+	});
+
+	it('returns true for various wTextBoxID values', () => {
+		for (const id of [1, 2, 5, 0x10, 0xff]) {
+			const ram = makeRam({ [ADDR_TEXT_BOX_ID]: id });
+			expect(isTextBoxActive(ram)).toBe(true);
+		}
+	});
+
+	it('returns true when wStatusFlags3 bit 6 is set', () => {
+		const ram = makeRam({ [ADDR_TEXT_STATUS_FLAGS]: 0x40 }); // bit 6
+		expect(isTextBoxActive(ram)).toBe(true);
+	});
+
+	it('returns true when both wTextBoxID and status flag bit 6 are set', () => {
+		const ram = makeRam({
+			[ADDR_TEXT_BOX_ID]: 3,
+			[ADDR_TEXT_STATUS_FLAGS]: 0x40,
+		});
+		expect(isTextBoxActive(ram)).toBe(true);
+	});
+
+	it('returns false when wStatusFlags3 has other bits set but not bit 6', () => {
+		const ram = makeRam({ [ADDR_TEXT_STATUS_FLAGS]: 0x3f }); // bits 0-5 set, bit 6 clear
+		expect(isTextBoxActive(ram)).toBe(false);
+	});
+
+	it('returns true when wStatusFlags3 has bit 6 among other bits', () => {
+		const ram = makeRam({ [ADDR_TEXT_STATUS_FLAGS]: 0xff }); // all bits set including bit 6
+		expect(isTextBoxActive(ram)).toBe(true);
+	});
+});
+
+describe('readMenuState', () => {
+	it('returns null when no menu is active', () => {
+		const ram = makeRam();
+		expect(readMenuState(ram)).toBeNull();
+	});
+
+	it('returns menu state when wMenuWatchedKeys is non-zero', () => {
+		const ram = makeRam({
+			[ADDR_MENU_WATCHED_KEYS]: 0x03, // menu is accepting input
+			[ADDR_CURRENT_MENU_ITEM]: 2,
+			[ADDR_MAX_MENU_ITEM_21]: 3,
+			[ADDR_LIST_SCROLL_OFFSET]: 0,
+		});
+		const state = readMenuState(ram);
+		expect(state).not.toBeNull();
+		expect(state?.currentItem).toBe(2);
+		expect(state?.maxItems).toBe(3);
+		expect(state?.scrollOffset).toBe(0);
+		expect(state?.isActive).toBe(true);
+	});
+
+	it('returns menu state with scroll offset for scrollable lists', () => {
+		const ram = makeRam({
+			[ADDR_MENU_WATCHED_KEYS]: 0x01,
+			[ADDR_CURRENT_MENU_ITEM]: 0,
+			[ADDR_MAX_MENU_ITEM_21]: 5,
+			[ADDR_LIST_SCROLL_OFFSET]: 3,
+		});
+		const state = readMenuState(ram);
+		expect(state).not.toBeNull();
+		expect(state?.currentItem).toBe(0);
+		expect(state?.maxItems).toBe(5);
+		expect(state?.scrollOffset).toBe(3);
+	});
+
+	it('returns null when no menu is active and no text box', () => {
+		const ram = makeRam({
+			[ADDR_MENU_WATCHED_KEYS]: 0,
+			[ADDR_TEXT_BOX_ID]: 0,
+		});
+		expect(readMenuState(ram)).toBeNull();
+	});
+
+	it('returns menu state with first item selected', () => {
+		const ram = makeRam({
+			[ADDR_MENU_WATCHED_KEYS]: 0xff,
+			[ADDR_CURRENT_MENU_ITEM]: 0,
+			[ADDR_MAX_MENU_ITEM_21]: 3,
+			[ADDR_LIST_SCROLL_OFFSET]: 0,
+		});
+		const state = readMenuState(ram);
+		expect(state).not.toBeNull();
+		expect(state?.currentItem).toBe(0);
+	});
+
+	it('returns isActive true when watchedKeys is set', () => {
+		const ram = makeRam({
+			[ADDR_MENU_WATCHED_KEYS]: 0x01,
+		});
+		const state = readMenuState(ram);
+		expect(state).not.toBeNull();
+		expect(state?.isActive).toBe(true);
+	});
+});
+
+// Reverse map: character -> tile ID (for test setup)
+// Uses a Map for special chars to avoid excessive cognitive complexity from if-chains
+const charToTileMap = new Map<string, number>([
+	[' ', 0x7f],
+	['!', 0xe5],
+	['?', 0xe4],
+	['.', 0xe6],
+	['-', 0xe3],
+	["'", 0xe0],
+]);
+
+function charToTile(char: string): number {
+	const mapped = charToTileMap.get(char);
+	if (mapped !== undefined) return mapped;
+	const code = char.charCodeAt(0);
+	if (code >= 0x41 && code <= 0x5a) return 0x80 + code - 0x41; // A-Z
+	if (code >= 0x61 && code <= 0x7a) return 0xa0 + code - 0x61; // a-z
+	if (code >= 0x30 && code <= 0x39) return 0xf6 + code - 0x30; // 0-9
+	return 0x7f; // default to space
+}
+
+function writeTextToRow(ram: Array<number>, row: number, colStart: number, text: string): void {
+	const rowAddr = SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH;
+	for (let c = 0; c < text.length && c < SCREEN_TILEMAP_WIDTH - 2; c++) {
+		ram[rowAddr + colStart + c] = charToTile(text[c] ?? ' ');
+	}
+}
+
+function makeDialogueRam(lines: Array<string>): ReadonlyArray<number> {
+	const ram = new Array(65536).fill(0) as Array<number>;
+
+	// Row 12: top border of dialogue box
+	const row12 = SCREEN_TILEMAP_START + 12 * SCREEN_TILEMAP_WIDTH;
+	ram[row12] = 0x79; // TILE_BOX_TOP_LEFT
+	ram[row12 + SCREEN_TILEMAP_WIDTH - 1] = 0x7b; // TILE_BOX_TOP_RIGHT
+
+	// Rows 13-16: text content (left border + text)
+	for (let i = 0; i < Math.min(lines.length, 4); i++) {
+		const rowAddr = SCREEN_TILEMAP_START + (13 + i) * SCREEN_TILEMAP_WIDTH;
+		ram[rowAddr] = 0x7c; // TILE_BOX_VERT_LEFT
+		writeTextToRow(ram, 13 + i, 1, lines[i] ?? '');
+	}
+
+	// Row 17: bottom border
+	ram[SCREEN_TILEMAP_START + 17 * SCREEN_TILEMAP_WIDTH] = 0x7e; // TILE_BOX_BOTTOM_LEFT
+
+	return ram;
+}
+
+function writeMenuItemRow(
+	ram: Array<number>,
+	row: number,
+	startCol: number,
+	text: string,
+	hasCursor: boolean,
+): void {
+	const rowAddr = SCREEN_TILEMAP_START + row * SCREEN_TILEMAP_WIDTH;
+	ram[rowAddr + startCol] = 0x7c; // TILE_BOX_VERT_LEFT
+	let col = startCol + 1;
+	if (hasCursor) {
+		ram[rowAddr + col] = 0xed; // TILE_CURSOR_ARROW
+		col++;
+	}
+	writeTextToRow(ram, row, col, text);
+}
+
+function makeMenuRam(
+	startRow: number,
+	startCol: number,
+	width: number,
+	items: Array<{ text: string; hasCursor: boolean }>,
+): ReadonlyArray<number> {
+	const ram = new Array(65536).fill(0) as Array<number>;
+
+	// Top border
+	const topAddr = SCREEN_TILEMAP_START + startRow * SCREEN_TILEMAP_WIDTH;
+	ram[topAddr + startCol] = 0x79; // TILE_BOX_TOP_LEFT
+	ram[topAddr + startCol + width] = 0x7b; // TILE_BOX_TOP_RIGHT
+
+	// Content rows with optional cursor
+	for (let i = 0; i < items.length; i++) {
+		const item = items[i];
+		if (item) {
+			writeMenuItemRow(ram, startRow + 1 + i, startCol, item.text, item.hasCursor);
+		}
+	}
+
+	// Bottom border
+	const bottomAddr = SCREEN_TILEMAP_START + (startRow + 1 + items.length) * SCREEN_TILEMAP_WIDTH;
+	ram[bottomAddr + startCol] = 0x7e; // TILE_BOX_BOTTOM_LEFT
+
+	return ram;
+}
+
+describe('readScreenText', () => {
+	it('returns null when no dialogue box is displayed', () => {
+		const ram = makeRam();
+		expect(readScreenText(ram)).toBeNull();
+	});
+
+	it('returns non-null when dialogue box is displayed', () => {
+		const ram = makeDialogueRam(['Hello']);
+		expect(readScreenText(ram)).not.toBeNull();
+	});
+
+	it('decodes simple text from dialogue box', () => {
+		const ram = makeDialogueRam(['Hello']);
+		const text = readScreenText(ram);
+		expect(text).toBe('Hello');
+	});
+
+	it('decodes multi-line dialogue', () => {
+		const ram = makeDialogueRam(['Hello', 'World']);
+		const text = readScreenText(ram);
+		expect(text).toBe('Hello\nWorld');
+	});
+
+	it('returns null when tilemap has no box border at row 12', () => {
+		const ram = makeRam();
+		const row12 = SCREEN_TILEMAP_START + 12 * SCREEN_TILEMAP_WIDTH;
+		(ram as Array<number>)[row12] = 0x00;
+		expect(readScreenText(ram)).toBeNull();
+	});
+
+	it('detects dialogue box with vertical left border tile', () => {
+		const ram = new Array(65536).fill(0) as Array<number>;
+		// Row 12 starts with TILE_BOX_VERT_LEFT instead of TOP_LEFT (continuation)
+		const row12 = SCREEN_TILEMAP_START + 12 * SCREEN_TILEMAP_WIDTH;
+		ram[row12] = 0x7c; // TILE_BOX_VERT_LEFT
+		// Put text in row 13
+		const row13 = SCREEN_TILEMAP_START + 13 * SCREEN_TILEMAP_WIDTH;
+		ram[row13 + 1] = 0x87; // 'H'
+		ram[row13 + 2] = 0x88; // 'I'
+		const text = readScreenText(ram);
+		expect(text).not.toBeNull();
+		expect(text).toBe('HI');
+	});
+});
+
+describe('readMenuText', () => {
+	it('returns null when no menu is on screen', () => {
+		const ram = makeRam();
+		expect(readMenuText(ram)).toBeNull();
+	});
+
+	it('detects menu with cursor arrow', () => {
+		const ram = makeMenuRam(2, 10, 8, [
+			{ text: 'FIGHT', hasCursor: true },
+			{ text: 'PKMN', hasCursor: false },
+			{ text: 'ITEM', hasCursor: false },
+			{ text: 'RUN', hasCursor: false },
+		]);
+		const text = readMenuText(ram);
+		expect(text).not.toBeNull();
+		expect(text).toContain('>');
+		expect(text).toContain('FIGHT');
+	});
+
+	it('returns null for box without cursor (info box, not interactive)', () => {
+		const ram = makeMenuRam(2, 10, 8, [
+			{ text: 'Hello', hasCursor: false },
+			{ text: 'World', hasCursor: false },
+		]);
+		expect(readMenuText(ram)).toBeNull();
+	});
+});
+
+describe('issue #21 address constants', () => {
+	it('has correct address for wCurMenuItem', () => {
+		expect(ADDR_CUR_MENU_ITEM).toBe(0xcc47);
+	});
+
+	it('has correct address for wCurrentMenuItem', () => {
+		expect(ADDR_CURRENT_MENU_ITEM).toBe(0xcc2a);
+	});
+
+	it('has correct address for wMaxMenuItem', () => {
+		expect(ADDR_MAX_MENU_ITEM_21).toBe(0xcc2c);
+	});
+
+	it('has correct address for wMenuWatchedKeys', () => {
+		expect(ADDR_MENU_WATCHED_KEYS).toBe(0xcc2d);
+	});
+
+	it('has correct address for wListScrollOffset', () => {
+		expect(ADDR_LIST_SCROLL_OFFSET).toBe(0xcc4f);
+	});
+
+	it('has correct address for wLetterPrintingDelayFlags', () => {
+		expect(ADDR_LETTER_PRINTING_DELAY).toBe(0xcc36);
+	});
+
+	it('has correct address for wTextDestAddrLo', () => {
+		expect(ADDR_TEXT_DEST_LO).toBe(0xcc26);
+	});
+
+	it('has correct address for wTextDestAddrHi', () => {
+		expect(ADDR_TEXT_DEST_HI).toBe(0xcc27);
+	});
+
+	it('has correct address for wTopMenuItemY', () => {
+		expect(ADDR_TOP_MENU_ITEM_Y_21).toBe(0xcc28);
+	});
+
+	it('has correct address for wTopMenuItemX', () => {
+		expect(ADDR_TOP_MENU_ITEM_X_21).toBe(0xcc29);
+	});
+
+	it('has correct address for wTileBehindCursor', () => {
+		expect(ADDR_TILE_BEHIND_CURSOR).toBe(0xcc2b);
+	});
+
+	it('has correct address for wTextBoxID', () => {
+		expect(ADDR_TEXT_BOX_ID).toBe(0xd12c);
+	});
+
+	it('has correct address for wd730 (text status flags)', () => {
+		expect(ADDR_TEXT_STATUS_FLAGS).toBe(0xd730);
 	});
 });
