@@ -427,6 +427,92 @@ export const playerInfoSchema = z.object({
 	party: z.array(pokemonStateSchema).max(6),
 });
 
+// ─── Full Player Info (enriched with badges, location, direction) ────────────
+
+export type FullPlayerInfo = {
+	name: string;
+	money: number;
+	badges: number;
+	badgeList: Array<string>;
+	location: {
+		mapId: number;
+		mapName: string;
+		x: number;
+		y: number;
+	};
+	direction: Direction;
+};
+
+export const fullPlayerInfoSchema = z.object({
+	name: z.string(),
+	money: z.number().int().min(0),
+	badges: z.number().int().min(0).max(8),
+	badgeList: z.array(z.string()),
+	location: z.object({
+		mapId: z.number().int().min(0),
+		mapName: z.string(),
+		x: z.number().int().min(0),
+		y: z.number().int().min(0),
+	}),
+	direction: directionSchema,
+});
+
+// ─── Party Pokemon (full RAM extraction) ─────────────────────────────────────
+
+export type PartyPokemonMove = {
+	name: string;
+	moveId: number;
+	pp: number;
+	maxPp: number;
+	type: string;
+	power: number;
+};
+
+export const partyPokemonMoveSchema = z.object({
+	name: z.string(),
+	moveId: z.number().int().min(0),
+	pp: z.number().int().min(0),
+	maxPp: z.number().int().min(0),
+	type: z.string(),
+	power: z.number().int().min(0),
+});
+
+export type PartyPokemon = {
+	species: string;
+	speciesId: number;
+	nickname: string;
+	level: number;
+	hp: number;
+	maxHp: number;
+	status: string;
+	moves: Array<PartyPokemonMove>;
+	stats: {
+		attack: number;
+		defense: number;
+		speed: number;
+		specialAttack: number;
+		specialDefense: number;
+	};
+};
+
+export const partyPokemonSchema = z.object({
+	species: z.string(),
+	speciesId: z.number().int().min(0),
+	nickname: z.string(),
+	level: z.number().int().min(1).max(100),
+	hp: z.number().int().min(0),
+	maxHp: z.number().int().min(1),
+	status: z.string(),
+	moves: z.array(partyPokemonMoveSchema).max(4),
+	stats: z.object({
+		attack: z.number().int().min(1),
+		defense: z.number().int().min(1),
+		speed: z.number().int().min(1),
+		specialAttack: z.number().int().min(1),
+		specialDefense: z.number().int().min(1),
+	}),
+});
+
 // ─── Overworld State ──────────────────────────────────────────────────────────
 
 export type OverworldState = {

@@ -4,6 +4,7 @@ import {
 	BattlePhase,
 	type BattleState,
 	type Direction,
+	type FullPlayerInfo,
 	type GameAction,
 	GamePhase,
 	type InventoryItem,
@@ -12,6 +13,8 @@ import {
 	type NpcInfo,
 	type OpponentState,
 	type OverworldState,
+	type PartyPokemon,
+	type PartyPokemonMove,
 	type PokemonState,
 	PokemonType,
 	StatusCondition,
@@ -138,9 +141,13 @@ export const ADDR_ENEMY_MAX_HP_HIGH = 0xcff4; // wEnemyMonMaxHP (offset +15, 2 b
 export const ADDR_ENEMY_MAX_HP_LOW = 0xcff5;
 
 // Party data addresses
-const ADDR_PARTY_COUNT = 0xd163; // number of Pokemon in party (0-6)
-const ADDR_PARTY_MONS = 0xd16b; // start of party Pokemon structs (44 bytes each)
+export const ADDR_PARTY_COUNT = 0xd163; // wPartyCount: number of Pokemon in party (0-6)
+export const ADDR_PARTY_SPECIES_LIST = 0xd164; // wPartySpecies: species IDs (6 bytes)
+export const ADDR_PARTY_MONS = 0xd16b; // wPartyMon1: start of party Pokemon structs (44 bytes each)
 const PARTY_MON_SIZE = 0x2c; // 44 bytes per party member
+export const ADDR_PARTY_OT_NAMES = 0xd273; // wPartyMonOT1: Original Trainer names (11 bytes each)
+export const ADDR_PARTY_NICKNAMES = 0xd2b5; // wPartyMonNick1: nicknames (11 bytes each)
+const PARTY_NICKNAME_SIZE = 11; // max nickname length including terminator
 
 // Status bitmasks (Gen 1)
 const STATUS_SLEEP_MASK = 0x07; // lower 3 bits = sleep turns remaining
@@ -1090,6 +1097,151 @@ export function readInventory(ram: ReadonlyArray<number>): Array<InventoryItem> 
 		});
 	}
 	return items;
+}
+
+// ─── BCD / Status / Player Info / Full Party ─────────────────────────────────
+
+/**
+ * Decode BCD (Binary Coded Decimal) bytes to a number.
+ * Each byte encodes two decimal digits. Used for money (3 bytes = 6 digits).
+ * Example: [0x01, 0x23, 0x45] -> 12345
+ */
+export function decodeBCD(bytes: ReadonlyArray<number>): number {
+	let result = 0;
+	for (const byte of bytes) {
+		result = result * 100 + (((byte >> 4) & 0x0f) * 10 + (byte & 0x0f));
+	}
+	return result;
+}
+
+/**
+ * Decode a status condition byte to a human-readable string.
+ * 0x00 = healthy, bits 0-2 = sleep turns, bit3 = frozen, bit4 = burned,
+ * bit5 = paralyzed, bit6 = poisoned.
+ */
+export function decodeStatusCondition(statusByte: number): string {
+	const { condition } = decodeStatus(statusByte);
+	switch (condition) {
+		case StatusCondition.Burn:
+			return 'burned';
+		case StatusCondition.Freeze:
+			return 'frozen';
+		case StatusCondition.Paralysis:
+			return 'paralyzed';
+		case StatusCondition.Poison:
+			return 'poisoned';
+		case StatusCondition.Sleep:
+			return 'asleep';
+		default:
+			return 'healthy';
+	}
+}
+
+/**
+ * Read enriched player info: name, money, badges with names, location, direction.
+ * Uses wPlayerDirection (0xD52A) for facing direction.
+ */
+export function readPlayerInfo(ram: ReadonlyArray<number>): FullPlayerInfo {
+	const mapId = ram[OVERWORLD_CUR_MAP] ?? 0;
+	const badgeByte = ram[OVERWORLD_BADGES] ?? 0;
+	const dirByte = ram[ADDR_PLAYER_DIRECTION] ?? 0;
+
+	return {
+		name: readPlayerName(ram),
+		money: readMoney(ram),
+		badges: readBadges(ram),
+		badgeList: decodeBadgeNames(badgeByte),
+		location: {
+			mapId,
+			mapName: decodeMapName(mapId),
+			x: ram[OVERWORLD_X_COORD] ?? 0,
+			y: ram[OVERWORLD_Y_COORD] ?? 0,
+		},
+		direction: decodeDirection(dirByte),
+	};
+}
+
+/**
+ * Read party move data for a single move slot.
+ */
+function readPartyMove(ram: ReadonlyArray<number>, base: number, index: number): PartyPokemonMove | null {
+	const moveId = ram[base + 0x08 + index] ?? 0;
+	if (moveId === 0) return null;
+	const pp = ram[base + 0x1d + index] ?? 0;
+	const moveInfo = MOVE_TABLE.get(moveId);
+	return {
+		name: moveInfo?.name ?? `Move#${moveId}`,
+		moveId,
+		pp,
+		maxPp: moveInfo?.basePp ?? pp,
+		type: moveInfo?.pokemonType ?? PokemonType.Normal,
+		power: moveInfo?.power ?? 0,
+	};
+}
+
+/**
+ * Read all 4 move slots for a party Pokemon, with Struggle fallback.
+ */
+function readPartyMoves(ram: ReadonlyArray<number>, base: number): Array<PartyPokemonMove> {
+	const moves: Array<PartyPokemonMove> = [];
+	for (let j = 0; j < 4; j++) {
+		const move = readPartyMove(ram, base, j);
+		if (!move) break;
+		moves.push(move);
+	}
+	if (moves.length === 0) {
+		moves.push({ name: 'Struggle', moveId: 0, pp: 1, maxPp: 1, type: PokemonType.Normal, power: 50 });
+	}
+	return moves;
+}
+
+/**
+ * Read a single party Pokemon's data from a struct base address and slot index.
+ */
+function readSinglePartyPokemon(ram: ReadonlyArray<number>, base: number, slotIndex: number): PartyPokemon | null {
+	const speciesCode = ram[base] ?? 0;
+	if (speciesCode === 0 || speciesCode === 0xff) return null;
+
+	const special = readWord(ram, base + 0x2a);
+	const nicknameAddr = ADDR_PARTY_NICKNAMES + slotIndex * PARTY_NICKNAME_SIZE;
+	const nickname = decodePokemonText(ram, nicknameAddr, PARTY_NICKNAME_SIZE);
+	const maxHp = readWord(ram, base + 0x22);
+
+	return {
+		species: decodeSpecies(speciesCode),
+		speciesId: speciesCode,
+		nickname: nickname.length > 0 ? nickname : decodeSpecies(speciesCode),
+		level: ram[base + 0x21] || 1,
+		hp: readWord(ram, base + 0x01),
+		maxHp: maxHp > 0 ? maxHp : 1,
+		status: decodeStatusCondition(ram[base + 0x04] ?? 0),
+		moves: readPartyMoves(ram, base),
+		stats: {
+			attack: readWord(ram, base + 0x24) || 1,
+			defense: readWord(ram, base + 0x26) || 1,
+			speed: readWord(ram, base + 0x28) || 1,
+			specialAttack: special || 1,
+			specialDefense: special || 1,
+		},
+	};
+}
+
+/**
+ * Read full party Pokemon data from RAM including actual stats, nicknames,
+ * and move details. Unlike readParty(), uses real stat values from RAM
+ * instead of estimated stats.
+ */
+export function readFullParty(ram: ReadonlyArray<number>): Array<PartyPokemon> {
+	const count = Math.min(ram[ADDR_PARTY_COUNT] ?? 0, 6);
+	if (count === 0) return [];
+
+	const party: Array<PartyPokemon> = [];
+	for (let i = 0; i < count; i++) {
+		const base = ADDR_PARTY_MONS + i * PARTY_MON_SIZE;
+		const pokemon = readSinglePartyPokemon(ram, base, i);
+		if (pokemon) party.push(pokemon);
+	}
+	return party;
 }
 
 export function readNearbySprites(ram: ReadonlyArray<number>): Array<NpcInfo> {
