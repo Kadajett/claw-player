@@ -3,16 +3,24 @@ import {
 	AchievementProgress,
 	ActivePokemon,
 	AgentStats,
+	BattleActivePokemonSchema,
+	BattleOpponentSchema,
 	BattleRoundEntry,
 	GameActionSchema,
 	GetBattleStateOutput,
+	GetGameStateOutput,
 	GetHistoryInput,
 	GetHistoryOutput,
 	GetRateLimitOutput,
+	InventoryItemSchema,
 	LeaderboardEntry,
 	Move,
+	MoveEffectivenessSchema,
 	OpponentPokemon,
 	PartyMember,
+	PartyPokemonMoveSchema,
+	PartyPokemonSchema,
+	StatModSchema,
 	SubmitActionInput,
 	SubmitActionOutput,
 	UnlockedAchievement,
@@ -383,6 +391,345 @@ describe('AgentStats', () => {
 	it('rejects winRate out of range', () => {
 		expect(() =>
 			AgentStats.parse({ totalTurns: 10, wins: 5, winRate: 1.5, bestStreak: 3, totalScore: 100, rank: 1 }),
+		).toThrow();
+	});
+});
+
+// ─── Unified Game State Schema Tests (Issue #13) ────────────────────────────
+
+const sampleMove: PartyPokemonMoveSchema = {
+	name: 'Thunderbolt',
+	moveId: 85,
+	pp: 15,
+	maxPp: 15,
+	type: 'electric',
+	power: 95,
+};
+
+const samplePartyPokemon: PartyPokemonSchema = {
+	species: 'Pikachu',
+	speciesId: 0x54,
+	nickname: 'PIKA',
+	level: 25,
+	hp: 52,
+	maxHp: 52,
+	status: 'healthy',
+	moves: [sampleMove],
+	stats: { attack: 55, defense: 30, speed: 90, specialAttack: 50, specialDefense: 50 },
+};
+
+const sampleInventoryItem: InventoryItemSchema = { itemId: 4, name: 'Poke Ball', quantity: 5 };
+
+const basePlayer = {
+	name: 'RED',
+	money: 3000,
+	badges: 3,
+	badgeList: ['Boulder Badge', 'Cascade Badge', 'Thunder Badge'],
+	location: { mapId: 1, mapName: 'Viridian City', x: 10, y: 5 },
+	direction: 'down' as const,
+	walkBikeSurf: 'walking' as const,
+};
+
+const baseProgress = { playTimeHours: 12, playTimeMinutes: 30, pokedexOwned: 45, pokedexSeen: 80 };
+
+const neutralStatMod: StatModSchema = { attack: 0, defense: 0, speed: 0, special: 0, accuracy: 0, evasion: 0 };
+
+describe('PartyPokemonMoveSchema', () => {
+	it('validates a move', () => {
+		expect(PartyPokemonMoveSchema.parse(sampleMove)).toEqual(sampleMove);
+	});
+
+	it('rejects missing fields', () => {
+		expect(() => PartyPokemonMoveSchema.parse({ name: 'Tackle' })).toThrow();
+	});
+});
+
+describe('PartyPokemonSchema', () => {
+	it('validates a party pokemon', () => {
+		expect(PartyPokemonSchema.parse(samplePartyPokemon)).toEqual(samplePartyPokemon);
+	});
+
+	it('accepts empty moves array', () => {
+		const noMoves = { ...samplePartyPokemon, moves: [] };
+		expect(PartyPokemonSchema.parse(noMoves)).toMatchObject({ moves: [] });
+	});
+
+	it('rejects missing stats', () => {
+		const { stats: _stats, ...noStats } = samplePartyPokemon;
+		expect(() => PartyPokemonSchema.parse(noStats)).toThrow();
+	});
+});
+
+describe('BattleActivePokemonSchema', () => {
+	it('validates active pokemon with types', () => {
+		const active = { ...samplePartyPokemon, types: ['electric'] };
+		expect(BattleActivePokemonSchema.parse(active)).toEqual(active);
+	});
+
+	it('rejects missing types field', () => {
+		expect(() => BattleActivePokemonSchema.parse(samplePartyPokemon)).toThrow();
+	});
+});
+
+describe('BattleOpponentSchema', () => {
+	const opponent = {
+		species: 'Geodude',
+		level: 12,
+		hp: 30,
+		maxHp: 35,
+		status: 'healthy',
+		types: ['rock', 'ground'],
+		knownMoves: [{ name: 'Tackle', moveId: 33, pp: 35, maxPp: 35, type: 'normal', power: 40 }],
+		stats: { attack: 40, defense: 80, speed: 20, specialAttack: 30, specialDefense: 30 },
+		trainerClass: 0,
+		partyCount: 1,
+	};
+
+	it('validates opponent', () => {
+		expect(BattleOpponentSchema.parse(opponent)).toEqual(opponent);
+	});
+
+	it('accepts empty knownMoves', () => {
+		const noMoves = { ...opponent, knownMoves: [] };
+		expect(BattleOpponentSchema.parse(noMoves)).toMatchObject({ knownMoves: [] });
+	});
+
+	it('rejects missing types', () => {
+		const { types: _types, ...noTypes } = opponent;
+		expect(() => BattleOpponentSchema.parse(noTypes)).toThrow();
+	});
+});
+
+describe('StatModSchema', () => {
+	it('validates neutral modifiers', () => {
+		expect(StatModSchema.parse(neutralStatMod)).toEqual(neutralStatMod);
+	});
+
+	it('validates extreme modifiers', () => {
+		const extreme = { attack: 6, defense: -6, speed: 3, special: -2, accuracy: 1, evasion: -1 };
+		expect(StatModSchema.parse(extreme)).toEqual(extreme);
+	});
+
+	it('rejects out-of-range modifier', () => {
+		expect(() => StatModSchema.parse({ ...neutralStatMod, attack: 7 })).toThrow();
+		expect(() => StatModSchema.parse({ ...neutralStatMod, defense: -7 })).toThrow();
+	});
+});
+
+describe('InventoryItemSchema', () => {
+	it('validates an item', () => {
+		expect(InventoryItemSchema.parse(sampleInventoryItem)).toEqual(sampleInventoryItem);
+	});
+
+	it('rejects missing name', () => {
+		expect(() => InventoryItemSchema.parse({ itemId: 1, quantity: 5 })).toThrow();
+	});
+});
+
+describe('MoveEffectivenessSchema', () => {
+	it('validates effectiveness entry', () => {
+		const entry = { slot: 0, moveName: 'Thunderbolt', effectiveness: 2.0 };
+		expect(MoveEffectivenessSchema.parse(entry)).toEqual(entry);
+	});
+
+	it('accepts zero effectiveness', () => {
+		const entry = { slot: 0, moveName: 'Thunder', effectiveness: 0 };
+		expect(MoveEffectivenessSchema.parse(entry)).toEqual(entry);
+	});
+});
+
+describe('GetGameStateOutput', () => {
+	const overworldState = {
+		turn: 42,
+		phase: 'overworld' as const,
+		secondsRemaining: 12,
+		availableActions: ['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'] as const,
+		player: basePlayer,
+		party: [samplePartyPokemon],
+		inventory: [sampleInventoryItem],
+		battle: null,
+		overworld: {
+			tileInFront: { tileId: 0x00, description: 'floor' },
+			hmAvailable: { cut: true, fly: false, surf: false, strength: false, flash: false },
+			wildEncounterRate: 25,
+		},
+		screenText: null,
+		menuState: null,
+		progress: baseProgress,
+		yourScore: 500,
+		yourRank: 5,
+		totalAgents: 20,
+		streak: 3,
+		tip: 'Head north to Route 2.',
+	};
+
+	const battleState = {
+		turn: 15,
+		phase: 'battle' as const,
+		secondsRemaining: 8,
+		availableActions: ['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'] as const,
+		player: basePlayer,
+		party: [samplePartyPokemon],
+		inventory: [sampleInventoryItem],
+		battle: {
+			type: 'wild' as const,
+			playerActive: {
+				...samplePartyPokemon,
+				types: ['electric'],
+			},
+			opponent: {
+				species: 'Geodude',
+				level: 12,
+				hp: 30,
+				maxHp: 35,
+				status: 'healthy',
+				types: ['rock', 'ground'],
+				knownMoves: [{ name: 'Tackle', moveId: 33, pp: 35, maxPp: 35, type: 'normal', power: 40 }],
+				stats: { attack: 40, defense: 80, speed: 20, specialAttack: 30, specialDefense: 30 },
+				trainerClass: 0,
+				partyCount: 1,
+			},
+			moveEffectiveness: [{ slot: 0, moveName: 'Thunderbolt', effectiveness: 0 }],
+			statModifiers: { player: neutralStatMod, enemy: neutralStatMod },
+			battleStatus: { playerFlags: [], enemyFlags: [] },
+			turnCount: 3,
+		},
+		overworld: null,
+		screenText: null,
+		menuState: null,
+		progress: baseProgress,
+		yourScore: 520,
+		yourRank: 4,
+		totalAgents: 20,
+		streak: 5,
+		tip: 'Electric moves have no effect on Ground types!',
+	};
+
+	it('validates a complete overworld state (battle: null, overworld: populated)', () => {
+		expect(GetGameStateOutput.parse(overworldState)).toEqual(overworldState);
+	});
+
+	it('validates a complete battle state (battle: populated, overworld: null)', () => {
+		expect(GetGameStateOutput.parse(battleState)).toEqual(battleState);
+	});
+
+	it('validates with all nullable fields as null', () => {
+		const minimal = {
+			...overworldState,
+			battle: null,
+			overworld: null,
+			screenText: null,
+			menuState: null,
+		};
+		expect(GetGameStateOutput.parse(minimal)).toEqual(minimal);
+	});
+
+	it('validates dialogue phase with screenText populated', () => {
+		const dialogue = {
+			...overworldState,
+			phase: 'dialogue' as const,
+			screenText: 'PROF. OAK: Hello there!',
+		};
+		expect(GetGameStateOutput.parse(dialogue)).toMatchObject({
+			phase: 'dialogue',
+			screenText: 'PROF. OAK: Hello there!',
+		});
+	});
+
+	it('validates menu phase with menuState populated', () => {
+		const menu = {
+			...overworldState,
+			phase: 'menu' as const,
+			menuState: { text: '>POKEMON\n ITEM\n SAVE', currentItem: 0, maxItems: 3 },
+		};
+		expect(GetGameStateOutput.parse(menu)).toMatchObject({
+			phase: 'menu',
+			menuState: { currentItem: 0 },
+		});
+	});
+
+	it('validates trainer battle type', () => {
+		const trainerBattle = {
+			...battleState,
+			battle: { ...battleState.battle, type: 'trainer' as const },
+		};
+		expect(GetGameStateOutput.parse(trainerBattle)).toMatchObject({
+			battle: { type: 'trainer' },
+		});
+	});
+
+	it('validates battle with status flags', () => {
+		const flagged = {
+			...battleState,
+			battle: {
+				...battleState.battle,
+				battleStatus: {
+					playerFlags: ['confused', 'substitute'],
+					enemyFlags: ['reflect'],
+				},
+			},
+		};
+		expect(GetGameStateOutput.parse(flagged)).toMatchObject({
+			battle: {
+				battleStatus: {
+					playerFlags: ['confused', 'substitute'],
+					enemyFlags: ['reflect'],
+				},
+			},
+		});
+	});
+
+	it('validates all walkBikeSurf modes', () => {
+		for (const mode of ['walking', 'biking', 'surfing'] as const) {
+			const state = {
+				...overworldState,
+				player: { ...basePlayer, walkBikeSurf: mode },
+			};
+			expect(GetGameStateOutput.parse(state)).toMatchObject({
+				player: { walkBikeSurf: mode },
+			});
+		}
+	});
+
+	it('rejects missing required fields', () => {
+		expect(() => GetGameStateOutput.parse({})).toThrow();
+		expect(() => GetGameStateOutput.parse({ turn: 1 })).toThrow();
+	});
+
+	it('rejects invalid phase', () => {
+		expect(() => GetGameStateOutput.parse({ ...overworldState, phase: 'cutscene' })).toThrow();
+		expect(() => GetGameStateOutput.parse({ ...overworldState, phase: 'idle' })).toThrow();
+	});
+
+	it('rejects invalid direction', () => {
+		expect(() =>
+			GetGameStateOutput.parse({
+				...overworldState,
+				player: { ...basePlayer, direction: 'north' },
+			}),
+		).toThrow();
+	});
+
+	it('rejects invalid walkBikeSurf mode', () => {
+		expect(() =>
+			GetGameStateOutput.parse({
+				...overworldState,
+				player: { ...basePlayer, walkBikeSurf: 'running' },
+			}),
+		).toThrow();
+	});
+
+	it('rejects wrong types for fields', () => {
+		expect(() => GetGameStateOutput.parse({ ...overworldState, turn: 'abc' })).toThrow();
+		expect(() => GetGameStateOutput.parse({ ...overworldState, secondsRemaining: 'soon' })).toThrow();
+	});
+
+	it('rejects invalid availableActions', () => {
+		expect(() =>
+			GetGameStateOutput.parse({
+				...overworldState,
+				availableActions: ['fly', 'swim'],
+			}),
 		).toThrow();
 	});
 });
