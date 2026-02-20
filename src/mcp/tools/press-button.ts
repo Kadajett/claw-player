@@ -26,6 +26,12 @@ const ButtonSchema = z.enum(['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START', '
 const DIRECTIONAL_BUTTONS = new Set<string>(['UP', 'DOWN', 'LEFT', 'RIGHT']);
 
 export function registerPressButtonTool(server: McpServer, emulator: GameBoyEmulator): void {
+	// Persistent navigation state across button presses
+	let lastSuccessfulDirection: string | null = null;
+	let consecutiveBlocks = 0;
+	const blockedDirections = new Set<string>();
+	let lastPosition = { x: -1, y: -1, mapId: -1 };
+
 	server.registerTool(
 		'press_button',
 		{
@@ -121,21 +127,60 @@ For directional buttons in overworld, the response includes whether movement suc
 					};
 				}
 
-				// Build movement feedback if applicable
+				// Build movement feedback and update navigation state
+				// Only track navigation state in overworld when movement is possible
+				// (not in battles, menus, or dialogue where directional buttons navigate UI)
 				let moved: boolean | undefined;
 				let blocked: boolean | undefined;
 				let mapChanged: boolean | undefined;
 				let message: string | undefined;
-				if (movementResult) {
+				if (movementResult && state.gamePhase === 'overworld') {
+					const currentPos = { x: movementResult.to.x, y: movementResult.to.y, mapId: movementResult.to.mapId };
+
+					// Reset blocked directions when position changes
+					if (
+						currentPos.x !== lastPosition.x ||
+						currentPos.y !== lastPosition.y ||
+						currentPos.mapId !== lastPosition.mapId
+					) {
+						blockedDirections.clear();
+						lastPosition = currentPos;
+					}
+
 					moved = movementResult.moved;
 					if (!movementResult.moved) {
 						blocked = true;
+						consecutiveBlocks++;
+						blockedDirections.add(button);
 						message = `Movement BLOCKED by ${facingTileDesc}`;
-					} else if (movementResult.from.mapId !== movementResult.to.mapId) {
-						mapChanged = true;
-						message = 'Entered a new map!';
+						if (consecutiveBlocks >= 3) {
+							const openDirs = ['UP', 'DOWN', 'LEFT', 'RIGHT'].filter((d) => !blockedDirections.has(d));
+							message += `. STUCK: ${consecutiveBlocks} consecutive blocks. Blocked: [${[...blockedDirections].join(', ')}].`;
+							if (openDirs.length > 0) {
+								message += ` Try: [${openDirs.join(', ')}]`;
+							} else {
+								message += ' All directions blocked, try A or B to interact.';
+							}
+						}
+					} else {
+						lastSuccessfulDirection = button;
+						consecutiveBlocks = 0;
+						if (movementResult.from.mapId !== movementResult.to.mapId) {
+							mapChanged = true;
+							blockedDirections.clear();
+							message = 'Entered a new map!';
+						}
 					}
+				} else if (movementResult) {
+					// In battle/dialogue/menu, still report position but don't track navigation
+					moved = movementResult.moved;
 				}
+
+				const navigation = {
+					...(lastSuccessfulDirection ? { lastSuccessfulDirection } : {}),
+					...(consecutiveBlocks > 0 ? { consecutiveBlocks } : {}),
+					...(blockedDirections.size > 0 ? { blockedDirections: [...blockedDirections] } : {}),
+				};
 
 				const result = {
 					button,
@@ -151,6 +196,7 @@ For directional buttons in overworld, the response includes whether movement suc
 					...(blocked ? { blocked } : {}),
 					...(mapChanged ? { mapChanged } : {}),
 					...(message ? { message } : {}),
+					...(Object.keys(navigation).length > 0 ? { navigation } : {}),
 				};
 
 				return {
