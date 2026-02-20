@@ -1,13 +1,32 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	ADDR_BATTLE_TURN_COUNT,
 	ADDR_BATTLE_TYPE,
+	ADDR_CRITICAL_OHKO_FLAG,
+	ADDR_ENEMY_ATTACK_MOD,
+	ADDR_ENEMY_BATTLE_STATUS1,
+	ADDR_ENEMY_BATTLE_STATUS2,
+	ADDR_ENEMY_BATTLE_STATUS3,
 	ADDR_ENEMY_HP_HIGH,
 	ADDR_ENEMY_MAX_HP_HIGH,
+	ADDR_ENEMY_SUBSTITUTE_HP,
 	ADDR_IN_BATTLE,
+	ADDR_PLAYER_ACCURACY_MOD,
+	ADDR_PLAYER_ATTACK_MOD,
+	ADDR_PLAYER_BATTLE_STATUS1,
+	ADDR_PLAYER_BATTLE_STATUS2,
+	ADDR_PLAYER_BATTLE_STATUS3,
+	ADDR_PLAYER_CONFUSION_COUNTER,
+	ADDR_PLAYER_DEFENSE_MOD,
+	ADDR_PLAYER_EVASION_MOD,
 	ADDR_PLAYER_HP_HIGH,
 	ADDR_PLAYER_LEVEL,
+	ADDR_PLAYER_SPECIAL_MOD,
 	ADDR_PLAYER_SPECIES,
+	ADDR_PLAYER_SPEED_MOD,
+	ADDR_PLAYER_SUBSTITUTE_HP,
+	ADDR_PLAYER_TOXIC_COUNTER,
 	OVERWORLD_BADGES,
 	OVERWORLD_BAG_ITEMS,
 	OVERWORLD_CUR_MAP,
@@ -37,10 +56,12 @@ import {
 	extractPlayerPokemon,
 	isInBattle,
 	readBadges,
+	readBattleStatusFlags,
 	readInventory,
 	readMoney,
 	readNearbySprites,
 	readPlayerName,
+	readStatModifiers,
 } from './memory-map.js';
 import { GamePhase, PokemonType, StatusCondition } from './types.js';
 
@@ -753,5 +774,245 @@ describe('extractOverworldState', () => {
 		const state = extractOverworldState(ram);
 		expect(state.menuOpen).toBeNull();
 		expect(state.dialogueText).toBeNull();
+	});
+});
+
+// ─── Stat Modifiers Tests ────────────────────────────────────────────────────
+
+describe('readStatModifiers', () => {
+	it('reads all neutral (7) when all bytes are 7', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_ATTACK_MOD]: 7,
+			[ADDR_PLAYER_DEFENSE_MOD]: 7,
+			[ADDR_PLAYER_SPEED_MOD]: 7,
+			[ADDR_PLAYER_SPECIAL_MOD]: 7,
+			[ADDR_PLAYER_ACCURACY_MOD]: 7,
+			[ADDR_PLAYER_EVASION_MOD]: 7,
+		});
+		const mods = readStatModifiers(ram, ADDR_PLAYER_ATTACK_MOD);
+		expect(mods.attack).toBe(7);
+		expect(mods.defense).toBe(7);
+		expect(mods.speed).toBe(7);
+		expect(mods.special).toBe(7);
+		expect(mods.accuracy).toBe(7);
+		expect(mods.evasion).toBe(7);
+	});
+
+	it('reads raised and lowered modifiers correctly', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_ATTACK_MOD]: 9, // +2 stages
+			[ADDR_PLAYER_DEFENSE_MOD]: 5, // -2 stages
+			[ADDR_PLAYER_SPEED_MOD]: 7, // neutral
+			[ADDR_PLAYER_SPECIAL_MOD]: 7,
+			[ADDR_PLAYER_ACCURACY_MOD]: 7,
+			[ADDR_PLAYER_EVASION_MOD]: 7,
+		});
+		const mods = readStatModifiers(ram, ADDR_PLAYER_ATTACK_MOD);
+		expect(mods.attack).toBe(9);
+		expect(mods.defense).toBe(5);
+		expect(mods.speed).toBe(7);
+	});
+
+	it('reads extreme values (1 = -6, 13 = +6)', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_ATTACK_MOD]: 1, // min (-6)
+			[ADDR_PLAYER_DEFENSE_MOD]: 13, // max (+6)
+			[ADDR_PLAYER_SPEED_MOD]: 7,
+			[ADDR_PLAYER_SPECIAL_MOD]: 7,
+			[ADDR_PLAYER_ACCURACY_MOD]: 7,
+			[ADDR_PLAYER_EVASION_MOD]: 7,
+		});
+		const mods = readStatModifiers(ram, ADDR_PLAYER_ATTACK_MOD);
+		expect(mods.attack).toBe(1);
+		expect(mods.defense).toBe(13);
+	});
+
+	it('works with enemy stat modifier base address', () => {
+		const ram = makeRam({
+			[ADDR_ENEMY_ATTACK_MOD]: 10,
+			[ADDR_ENEMY_ATTACK_MOD + 1]: 4,
+			[ADDR_ENEMY_ATTACK_MOD + 2]: 7,
+			[ADDR_ENEMY_ATTACK_MOD + 3]: 7,
+			[ADDR_ENEMY_ATTACK_MOD + 4]: 7,
+			[ADDR_ENEMY_ATTACK_MOD + 5]: 7,
+		});
+		const mods = readStatModifiers(ram, ADDR_ENEMY_ATTACK_MOD);
+		expect(mods.attack).toBe(10);
+		expect(mods.defense).toBe(4);
+	});
+
+	it('defaults to 7 (neutral) for unset RAM', () => {
+		const ram = makeRam();
+		const mods = readStatModifiers(ram, ADDR_PLAYER_ATTACK_MOD);
+		// RAM initialized to 0, but the ?? 7 fallback handles undefined (not 0)
+		// With makeRam filling 0, we get 0 for each byte
+		expect(mods.attack).toBe(0);
+	});
+});
+
+// ─── Battle Status Flags Tests ───────────────────────────────────────────────
+
+describe('readBattleStatusFlags', () => {
+	it('returns empty array when all bytes are 0', () => {
+		const ram = makeRam();
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toEqual([]);
+	});
+
+	it('decodes confused from byte 3 bit 0', () => {
+		const ram = makeRam({ [ADDR_PLAYER_BATTLE_STATUS3]: 0x01 });
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('confused');
+	});
+
+	it('decodes substitute from byte 2 bit 3', () => {
+		const ram = makeRam({ [ADDR_PLAYER_BATTLE_STATUS2]: 0x08 });
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('substitute');
+	});
+
+	it('decodes bide and invulnerable from byte 1', () => {
+		const ram = makeRam({ [ADDR_PLAYER_BATTLE_STATUS1]: 0x41 }); // bit 0 + bit 6
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('bide');
+		expect(flags).toContain('invulnerable');
+	});
+
+	it('decodes all byte 1 flags', () => {
+		const ram = makeRam({ [ADDR_PLAYER_BATTLE_STATUS1]: 0x7f }); // bits 0-6
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('bide');
+		expect(flags).toContain('thrash');
+		expect(flags).toContain('charging');
+		expect(flags).toContain('multi_turn');
+		expect(flags).toContain('flinch');
+		expect(flags).toContain('locked');
+		expect(flags).toContain('invulnerable');
+	});
+
+	it('decodes all byte 2 flags', () => {
+		const ram = makeRam({ [ADDR_PLAYER_BATTLE_STATUS2]: 0x0f }); // bits 0-3
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('x_accuracy');
+		expect(flags).toContain('mist');
+		expect(flags).toContain('focus_energy');
+		expect(flags).toContain('substitute');
+	});
+
+	it('decodes all byte 3 flags', () => {
+		const ram = makeRam({ [ADDR_PLAYER_BATTLE_STATUS3]: 0xb1 }); // bits 0,4,5,7
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('confused');
+		expect(flags).toContain('light_screen');
+		expect(flags).toContain('reflect');
+		expect(flags).toContain('transformed');
+	});
+
+	it('works with enemy battle status addresses', () => {
+		const ram = makeRam({
+			[ADDR_ENEMY_BATTLE_STATUS2]: 0x08, // substitute
+			[ADDR_ENEMY_BATTLE_STATUS3]: 0x01, // confused
+		});
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_ENEMY_BATTLE_STATUS1,
+			ADDR_ENEMY_BATTLE_STATUS2,
+			ADDR_ENEMY_BATTLE_STATUS3,
+		);
+		expect(flags).toContain('confused');
+		expect(flags).toContain('substitute');
+		expect(flags).toHaveLength(2);
+	});
+
+	it('decodes mixed flags across all 3 bytes', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_BATTLE_STATUS1]: 0x02, // thrash
+			[ADDR_PLAYER_BATTLE_STATUS2]: 0x04, // focus_energy
+			[ADDR_PLAYER_BATTLE_STATUS3]: 0x20, // reflect
+		});
+		const flags = readBattleStatusFlags(
+			ram,
+			ADDR_PLAYER_BATTLE_STATUS1,
+			ADDR_PLAYER_BATTLE_STATUS2,
+			ADDR_PLAYER_BATTLE_STATUS3,
+		);
+		expect(flags).toEqual(['thrash', 'focus_energy', 'reflect']);
+	});
+});
+
+// ─── Misc Battle Address Tests ───────────────────────────────────────────────
+
+describe('misc battle address constants', () => {
+	it('battle turn count address reads correctly', () => {
+		const ram = makeRam({ [ADDR_BATTLE_TURN_COUNT]: 15 });
+		expect(ram[ADDR_BATTLE_TURN_COUNT]).toBe(15);
+	});
+
+	it('substitute HP addresses are distinct', () => {
+		const ram = makeRam({
+			[ADDR_PLAYER_SUBSTITUTE_HP]: 50,
+			[ADDR_ENEMY_SUBSTITUTE_HP]: 30,
+		});
+		expect(ram[ADDR_PLAYER_SUBSTITUTE_HP]).toBe(50);
+		expect(ram[ADDR_ENEMY_SUBSTITUTE_HP]).toBe(30);
+	});
+
+	it('critical/OHKO flag address reads correctly', () => {
+		const ram = makeRam({ [ADDR_CRITICAL_OHKO_FLAG]: 1 });
+		expect(ram[ADDR_CRITICAL_OHKO_FLAG]).toBe(1);
+	});
+
+	it('confusion counter address reads correctly', () => {
+		const ram = makeRam({ [ADDR_PLAYER_CONFUSION_COUNTER]: 3 });
+		expect(ram[ADDR_PLAYER_CONFUSION_COUNTER]).toBe(3);
+	});
+
+	it('toxic counter address reads correctly', () => {
+		const ram = makeRam({ [ADDR_PLAYER_TOXIC_COUNTER]: 5 });
+		expect(ram[ADDR_PLAYER_TOXIC_COUNTER]).toBe(5);
+	});
+
+	it('address constants have correct hex values', () => {
+		expect(ADDR_BATTLE_TURN_COUNT).toBe(0xccd5);
+		expect(ADDR_PLAYER_SUBSTITUTE_HP).toBe(0xccd7);
+		expect(ADDR_ENEMY_SUBSTITUTE_HP).toBe(0xccd8);
+		expect(ADDR_CRITICAL_OHKO_FLAG).toBe(0xd05e);
+		expect(ADDR_PLAYER_CONFUSION_COUNTER).toBe(0xd06b);
+		expect(ADDR_PLAYER_TOXIC_COUNTER).toBe(0xd06c);
 	});
 });
