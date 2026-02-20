@@ -1,0 +1,79 @@
+{
+	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"organizeImports": {
+		"enabled": true
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 120
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"complexity": {
+				"noExcessiveCognitiveComplexity": "error",
+				"noVoid": "error",
+				"useLiteralKeys": "error",
+				"useSimplifiedLogicExpression": "error"
+			},
+			"correctness": {
+				"noUnusedImports": "error",
+				"noUnusedVariables": "error",
+				"useExhaustiveDependencies": "warn"
+			},
+			"performance": {
+				"noAccumulatingSpread": "error",
+				"noBarrelFile": "error",
+				"noReExportAll": "error"
+			},
+			"style": {
+				"noNonNullAssertion": "error",
+				"useConsistentArrayType": {
+					"level": "error",
+					"options": { "syntax": "generic" }
+				},
+				"useConst": "error",
+				"useExportType": "error",
+				"useImportType": "error",
+				"useNamingConvention": {
+					"level": "error",
+					"options": {
+						"strictCase": false,
+						"conventions": [
+							{ "selector": { "kind": "typeAlias" }, "formats": ["PascalCase"] },
+							{ "selector": { "kind": "interface" }, "formats": ["PascalCase"] },
+							{ "selector": { "kind": "enum" }, "formats": ["PascalCase"] },
+							{ "selector": { "kind": "enumMember" }, "formats": ["PascalCase", "CONSTANT_CASE"] },
+							{
+								"selector": { "kind": "const", "scope": "global" },
+								"formats": ["camelCase", "CONSTANT_CASE", "PascalCase"]
+							},
+							{
+								"selector": { "kind": "objectLiteralProperty" },
+								"formats": ["camelCase", "CONSTANT_CASE", "PascalCase"]
+							}
+						]
+					}
+				}
+			},
+			"suspicious": {
+				"noExplicitAny": "error",
+				"noConsole": "warn"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "single",
+			"trailingCommas": "all",
+			"semicolons": "always"
+		}
+	}
+}
