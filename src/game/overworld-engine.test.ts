@@ -4,7 +4,6 @@ import {
 	DEFAULT_FRAME_COUNTS,
 	DEFAULT_OVERWORLD_FALLBACK_ACTION,
 	GamePhase,
-	type OverworldAction,
 	type OverworldState,
 	OverworldTickProcessor,
 	OverworldVoteAggregator,
@@ -19,6 +18,7 @@ import {
 	overworldActionSchema,
 	parseOverworldAction,
 } from './overworld-engine.js';
+import type { GameAction } from './types.js';
 
 // ─── RAM Address Constants (matching overworld-engine.ts internal addresses) ──
 
@@ -51,7 +51,7 @@ function makeOverworldState(overrides?: Partial<OverworldState>): OverworldState
 		playerX: 5,
 		playerY: 10,
 		mapId: 1,
-		availableActions: ['up', 'down', 'left', 'right', 'a_button', 'b_button', 'start', 'select'],
+		availableActions: ['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'],
 		lastAction: null,
 		turnHistory: [],
 		createdAt: now,
@@ -129,12 +129,12 @@ describe('mapActionToButton', () => {
 		expect(mapActionToButton('right')).toBe('RIGHT');
 	});
 
-	it('maps a_button to A', () => {
-		expect(mapActionToButton('a_button')).toBe('A');
+	it('maps a to A', () => {
+		expect(mapActionToButton('a')).toBe('A');
 	});
 
-	it('maps b_button to B', () => {
-		expect(mapActionToButton('b_button')).toBe('B');
+	it('maps b to B', () => {
+		expect(mapActionToButton('b')).toBe('B');
 	});
 
 	it('maps start to START', () => {
@@ -156,12 +156,12 @@ describe('getFrameCount', () => {
 		expect(getFrameCount('right')).toBe(DEFAULT_FRAME_COUNTS.movement);
 	});
 
-	it('returns a_button frames', () => {
-		expect(getFrameCount('a_button')).toBe(DEFAULT_FRAME_COUNTS.aButton);
+	it('returns a button frames', () => {
+		expect(getFrameCount('a')).toBe(DEFAULT_FRAME_COUNTS.aButton);
 	});
 
-	it('returns b_button frames', () => {
-		expect(getFrameCount('b_button')).toBe(DEFAULT_FRAME_COUNTS.bButton);
+	it('returns b button frames', () => {
+		expect(getFrameCount('b')).toBe(DEFAULT_FRAME_COUNTS.bButton);
 	});
 
 	it('returns start frames', () => {
@@ -177,16 +177,7 @@ describe('getFrameCount', () => {
 
 describe('parseOverworldAction', () => {
 	it('parses all valid actions', () => {
-		const validActions: Array<OverworldAction> = [
-			'up',
-			'down',
-			'left',
-			'right',
-			'a_button',
-			'b_button',
-			'start',
-			'select',
-		];
+		const validActions: Array<GameAction> = ['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'];
 		for (const action of validActions) {
 			expect(parseOverworldAction(action)).toBe(action);
 		}
@@ -197,6 +188,8 @@ describe('parseOverworldAction', () => {
 		expect(parseOverworldAction('move:0')).toBeNull();
 		expect(parseOverworldAction('')).toBeNull();
 		expect(parseOverworldAction('UP')).toBeNull();
+		expect(parseOverworldAction('a_button')).toBeNull();
+		expect(parseOverworldAction('b_button')).toBeNull();
 	});
 });
 
@@ -205,7 +198,7 @@ describe('parseOverworldAction', () => {
 describe('overworldActionSchema', () => {
 	it('validates correct overworld actions', () => {
 		expect(overworldActionSchema.safeParse('up').success).toBe(true);
-		expect(overworldActionSchema.safeParse('a_button').success).toBe(true);
+		expect(overworldActionSchema.safeParse('a').success).toBe(true);
 	});
 
 	it('rejects invalid actions', () => {
@@ -217,39 +210,19 @@ describe('overworldActionSchema', () => {
 // ─── getAvailableActions ─────────────────────────────────────────────────────
 
 describe('getAvailableActions', () => {
-	it('returns all 8 actions for Overworld phase', () => {
-		const actions = getAvailableActions(GamePhase.Overworld);
-		expect(actions).toHaveLength(8);
-		expect(actions).toContain('up');
-		expect(actions).toContain('down');
-		expect(actions).toContain('left');
-		expect(actions).toContain('right');
-		expect(actions).toContain('a_button');
-		expect(actions).toContain('b_button');
-		expect(actions).toContain('start');
-		expect(actions).toContain('select');
-	});
-
-	it('returns directional + A/B for Menu phase', () => {
-		const actions = getAvailableActions(GamePhase.Menu);
-		expect(actions).toHaveLength(6);
-		expect(actions).toContain('up');
-		expect(actions).toContain('a_button');
-		expect(actions).toContain('b_button');
-		expect(actions).not.toContain('start');
-		expect(actions).not.toContain('select');
-	});
-
-	it('returns only A/B for Dialogue phase', () => {
-		const actions = getAvailableActions(GamePhase.Dialogue);
-		expect(actions).toHaveLength(2);
-		expect(actions).toContain('a_button');
-		expect(actions).toContain('b_button');
-	});
-
-	it('returns empty array for Battle phase', () => {
-		const actions = getAvailableActions(GamePhase.Battle);
-		expect(actions).toHaveLength(0);
+	it('returns all 8 actions for every phase', () => {
+		for (const phase of [GamePhase.Overworld, GamePhase.Menu, GamePhase.Dialogue, GamePhase.Battle]) {
+			const actions = getAvailableActions(phase);
+			expect(actions).toHaveLength(8);
+			expect(actions).toContain('up');
+			expect(actions).toContain('down');
+			expect(actions).toContain('left');
+			expect(actions).toContain('right');
+			expect(actions).toContain('a');
+			expect(actions).toContain('b');
+			expect(actions).toContain('start');
+			expect(actions).toContain('select');
+		}
 	});
 });
 
@@ -264,20 +237,20 @@ describe('describeAction', () => {
 	});
 
 	it('describes button presses in overworld', () => {
-		expect(describeAction('a_button', GamePhase.Overworld)).toBe('Pressed A (interact)');
-		expect(describeAction('b_button', GamePhase.Overworld)).toBe('Pressed B (cancel)');
+		expect(describeAction('a', GamePhase.Overworld)).toBe('Pressed A (interact)');
+		expect(describeAction('b', GamePhase.Overworld)).toBe('Pressed B (cancel)');
 		expect(describeAction('start', GamePhase.Overworld)).toBe('Opened start menu');
 		expect(describeAction('select', GamePhase.Overworld)).toBe('Pressed Select');
 	});
 
 	it('describes dialogue-specific actions', () => {
-		expect(describeAction('a_button', GamePhase.Dialogue)).toBe('Advanced dialogue');
-		expect(describeAction('b_button', GamePhase.Dialogue)).toBe('Tried to skip dialogue');
+		expect(describeAction('a', GamePhase.Dialogue)).toBe('Advanced dialogue');
+		expect(describeAction('b', GamePhase.Dialogue)).toBe('Tried to skip dialogue');
 	});
 
 	it('describes menu-specific actions', () => {
-		expect(describeAction('a_button', GamePhase.Menu)).toBe('Confirmed menu selection');
-		expect(describeAction('b_button', GamePhase.Menu)).toBe('Cancelled/closed menu');
+		expect(describeAction('a', GamePhase.Menu)).toBe('Confirmed menu selection');
+		expect(describeAction('b', GamePhase.Menu)).toBe('Cancelled/closed menu');
 		expect(describeAction('up', GamePhase.Menu)).toBe('Navigated menu up');
 		expect(describeAction('down', GamePhase.Menu)).toBe('Navigated menu down');
 	});
@@ -365,7 +338,7 @@ describe('extractOverworldState', () => {
 		const ram = makeRam({ [ADDR_TEXT_BOX_ID]: 1 });
 		const state = extractOverworldState(ram, 'game-1', 0);
 		expect(state.phase).toBe(GamePhase.Dialogue);
-		expect(state.availableActions).toHaveLength(2);
+		expect(state.availableActions).toHaveLength(8);
 	});
 
 	it('initializes with null lastAction and empty turnHistory', () => {
@@ -581,7 +554,7 @@ describe('OverworldTickProcessor', () => {
 		});
 
 		it('does not advance additional frames when frame count is 0', async () => {
-			voteTallier = makeMockVoteTallier(makeVoteResult({ winningAction: 'a_button' }));
+			voteTallier = makeMockVoteTallier(makeVoteResult({ winningAction: 'a' }));
 			stateStore = makeMockStateStore(makeOverworldState());
 			processor = new OverworldTickProcessor(
 				// biome-ignore lint/suspicious/noExplicitAny: test mock
@@ -623,7 +596,7 @@ describe('OverworldTickProcessor', () => {
 
 		it('uses fallback action when winning action is not in availableActions', async () => {
 			const state = makeOverworldState({
-				availableActions: ['a_button', 'b_button'],
+				availableActions: ['a', 'b'],
 				phase: GamePhase.Dialogue,
 			});
 			stateStore = makeMockStateStore(state);
@@ -643,7 +616,7 @@ describe('OverworldTickProcessor', () => {
 
 			await vi.advanceTimersByTimeAsync(1000);
 
-			// Fallback is 'a_button' -> 'A'
+			// Fallback is 'a' -> 'A'
 			expect(emulator.pressButton).toHaveBeenCalledWith('A');
 		});
 

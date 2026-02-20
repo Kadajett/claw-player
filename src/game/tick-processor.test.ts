@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TickProcessor } from './tick-processor.js';
-import { BattlePhase, type BattleState, PokemonType, StatusCondition, type VoteResult } from './types.js';
+import {
+	BattlePhase,
+	type BattleState,
+	type GameAction,
+	PokemonType,
+	StatusCondition,
+	type VoteResult,
+} from './types.js';
 
 function makePokemon() {
 	return {
@@ -46,7 +53,7 @@ function makeValidState(overrides?: Partial<BattleState>): BattleState {
 			types: [PokemonType.Normal],
 			level: 10,
 		},
-		availableActions: ['move:0', 'run'],
+		availableActions: ['a', 'up'] as Array<GameAction>,
 		weather: 'clear',
 		turnHistory: [],
 		lastAction: null,
@@ -60,8 +67,8 @@ function makeVoteResult(overrides?: Partial<VoteResult>): VoteResult {
 	return {
 		tickId: 0,
 		gameId: 'game-1',
-		winningAction: 'move:0',
-		voteCounts: { 'move:0': 5 },
+		winningAction: 'a',
+		voteCounts: { a: 5 },
 		totalVotes: 5,
 		...overrides,
 	};
@@ -165,9 +172,9 @@ describe('TickProcessor', () => {
 		});
 
 		it('uses fallback action when winning action is not in availableActions', async () => {
-			const state = makeValidState({ availableActions: ['run'] });
+			const state = makeValidState({ availableActions: ['b'] as Array<GameAction> });
 			stateManager = makeMockStateManager(state);
-			voteAggregator = makeMockVoteAggregator(makeVoteResult({ winningAction: 'move:0' }));
+			voteAggregator = makeMockVoteAggregator(makeVoteResult({ winningAction: 'up' }));
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			processor = new TickProcessor(stateManager as any, voteAggregator as any, mockLogger as any, {
 				tickIntervalMs: 1000,
@@ -183,19 +190,9 @@ describe('TickProcessor', () => {
 		});
 
 		it('stops automatically when battle_over phase', async () => {
-			stateManager = makeMockStateManager(makeValidState());
-
-			// Make applyAction return a battle_over state by making opponent faint
-			const faintingState = makeValidState({
-				opponent: {
-					species: 'Rattata',
-					hpPercent: 0.001,
-					status: StatusCondition.None,
-					types: [PokemonType.Normal],
-					level: 1,
-				},
-			});
-			stateManager = makeMockStateManager(faintingState);
+			// Start with a state that will result in battle_over after the tick
+			const battleOverState = makeValidState({ phase: BattlePhase.BattleOver });
+			stateManager = makeMockStateManager(battleOverState);
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			processor = new TickProcessor(stateManager as any, voteAggregator as any, mockLogger as any, {
 				tickIntervalMs: 1000,
@@ -203,7 +200,7 @@ describe('TickProcessor', () => {
 
 			await processor.start('game-1');
 
-			// First tick should cause battle_over and auto-stop
+			// Tick should detect battle_over and auto-stop
 			await vi.advanceTimersByTimeAsync(1000);
 
 			expect(processor.isRunning()).toBe(false);
