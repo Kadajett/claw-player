@@ -110,7 +110,6 @@ const validBattleState = {
 type GlobalWithWebSocket = { WebSocket?: unknown };
 
 function setGlobalWs(impl: unknown): void {
-	// biome-ignore lint/style/useNamingConvention: WebSocket is a standard Web API name
 	(globalThis as unknown as GlobalWithWebSocket).WebSocket = impl;
 }
 
@@ -120,7 +119,6 @@ function getGlobalWsCtor(): ReturnType<typeof vi.fn> | undefined {
 }
 
 function clearGlobalWs(): void {
-	// biome-ignore lint/style/useNamingConvention: WebSocket is a standard Web API name
 	(globalThis as unknown as GlobalWithWebSocket).WebSocket = undefined;
 }
 
