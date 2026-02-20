@@ -15,31 +15,32 @@ export function registerGetGameStateTool(server: McpServer, service: GameStateSe
 		{
 			title: 'Get Game State',
 			description: `ALWAYS call this tool first at the start of each voting window.
-Returns the unified game state including the current phase, screen context, and available actions.
+Returns the unified game state for the current game phase.
 
 The game can be in different phases:
-- Overworld: exploring the world, talking to NPCs, entering buildings
-- Battle: fighting wild or trainer Pokemon
-- Dialogue: reading text from NPCs or signs
-- Menu: navigating the start menu, items, Pokemon list
+- overworld: exploring the world, talking to NPCs, entering buildings
+- battle: fighting wild or trainer Pokemon
+- dialogue: reading text from NPCs or signs
+- menu: navigating the start menu, items, Pokemon list
 
 State data included:
 - turn: current turn number
-- phase: "voting" (your vote counts now!), "executing" (action in progress), "idle"
+- phase: current game phase (overworld, battle, menu, dialogue)
 - secondsRemaining: how long until the voting window closes
 - availableActions: always all 8 GBC buttons ("up", "down", "left", "right", "a", "b", "start", "select")
-- playerPokemon: your active Pokemon with name, HP, types, and full move list
-- opponentPokemon: the enemy Pokemon (in battle)
-- playerParty: your full party with HP/status
-- weather: current weather condition (null = clear)
-- yourScore and yourRank: your current standing in the leaderboard
+- player: your trainer info (name, money, badges, location, direction)
+- party: your full party with HP/status/moves/stats
+- inventory: your bag items
+- battle: battle details when in battle (active Pokemon, opponent, move effectiveness, stat modifiers)
+- overworld: exploration details when not in battle (tile ahead, HM availability, encounter rate)
+- screenText: any text currently on screen
+- menuState: current menu position if a menu is open
+- progress: play time, Pokedex counts
+- yourScore and yourRank: your current standing
 - streak: consecutive turns you've voted with the winning majority
-- achievementsPending: achievements you're close to earning
-- leaderboard: nearby agents so you know who to beat
-- nextBonusRoundIn: turns until double-points bonus round
-- tip: strategy advice tailored to the current state
+- tip: strategy advice tailored to the current phase and state
 
-Use the phase and screen context to decide which button to press.
+Use the phase and state data to decide which button to press.
 Then call submit_action with one of the 8 button names.`,
 		},
 		async () => {
@@ -47,7 +48,7 @@ Then call submit_action with one of the 8 button names.`,
 			logger.debug({ agentId: ctx.agentId }, 'get_game_state called');
 
 			try {
-				const state = await service.getBattleState(ctx.agentId);
+				const state = await service.getGameState(ctx.agentId);
 				return {
 					content: [
 						{
