@@ -24,29 +24,29 @@ import {
 export const ADDR_BATTLE_TYPE = 0xd057; // 0=no battle, 1=wild, 2=trainer
 export const ADDR_IN_BATTLE = 0xd058; // non-zero when in battle
 
-// Player's active Pokemon (battle copy)
-export const ADDR_PLAYER_SPECIES = 0xcfe5; // species index (1-151)
-export const ADDR_PLAYER_HP_HIGH = 0xd015; // current HP high byte
-export const ADDR_PLAYER_HP_LOW = 0xd016; // current HP low byte
-export const ADDR_PLAYER_MAX_HP_HIGH = 0xd017; // max HP high byte
-export const ADDR_PLAYER_MAX_HP_LOW = 0xd018; // max HP low byte
-export const ADDR_PLAYER_STATUS = 0xd019; // status bitmask
-export const ADDR_PLAYER_TYPE1 = 0xd01a; // type 1
-export const ADDR_PLAYER_TYPE2 = 0xd01b; // type 2 (same as type 1 if single-type)
-export const ADDR_PLAYER_LEVEL = 0xd022; // current level
-export const ADDR_PLAYER_MOVES = 0xd01c; // 4 move IDs (1 byte each)
-export const ADDR_PLAYER_PP = 0xd02d; // 4 PP values (1 byte each)
+// Player's active Pokemon (wBattleMon @ 0xD014, from pret/pokered battle_struct)
+export const ADDR_PLAYER_SPECIES = 0xd014; // wBattleMonSpecies
+export const ADDR_PLAYER_HP_HIGH = 0xd015; // wBattleMonHP (2 bytes, big-endian)
+export const ADDR_PLAYER_HP_LOW = 0xd016;
+export const ADDR_PLAYER_STATUS = 0xd018; // wBattleMonStatus (offset +4)
+export const ADDR_PLAYER_TYPE1 = 0xd019; // wBattleMonType1 (offset +5)
+export const ADDR_PLAYER_TYPE2 = 0xd01a; // wBattleMonType2 (offset +6)
+export const ADDR_PLAYER_MOVES = 0xd01c; // wBattleMonMoves (offset +8, 4 bytes)
+export const ADDR_PLAYER_LEVEL = 0xd022; // wBattleMonLevel (offset +14)
+export const ADDR_PLAYER_MAX_HP_HIGH = 0xd023; // wBattleMonMaxHP (offset +15, 2 bytes)
+export const ADDR_PLAYER_MAX_HP_LOW = 0xd024;
+export const ADDR_PLAYER_PP = 0xd02d; // wBattleMonPP (offset +25, 4 bytes)
 
-// Enemy Pokemon
-export const ADDR_ENEMY_SPECIES = 0xcfe6; // species index
-export const ADDR_ENEMY_HP_HIGH = 0xcfe7; // current HP high byte
-export const ADDR_ENEMY_HP_LOW = 0xcfe8; // current HP low byte
-export const ADDR_ENEMY_MAX_HP_HIGH = 0xd025; // max HP high byte
-export const ADDR_ENEMY_MAX_HP_LOW = 0xd026; // max HP low byte
-export const ADDR_ENEMY_STATUS = 0xcfe9; // status bitmask
-export const ADDR_ENEMY_TYPE1 = 0xd0ac; // enemy type 1
-export const ADDR_ENEMY_TYPE2 = 0xd0ad; // enemy type 2
-export const ADDR_ENEMY_LEVEL = 0xcfeb; // enemy level
+// Enemy Pokemon (wEnemyMon @ 0xCFE5, from pret/pokered battle_struct)
+export const ADDR_ENEMY_SPECIES = 0xcfe5; // wEnemyMonSpecies (offset +0)
+export const ADDR_ENEMY_HP_HIGH = 0xcfe6; // wEnemyMonHP (offset +1, 2 bytes)
+export const ADDR_ENEMY_HP_LOW = 0xcfe7;
+export const ADDR_ENEMY_STATUS = 0xcfe9; // wEnemyMonStatus (offset +4)
+export const ADDR_ENEMY_TYPE1 = 0xcfea; // wEnemyMonType1 (offset +5)
+export const ADDR_ENEMY_TYPE2 = 0xcfeb; // wEnemyMonType2 (offset +6)
+export const ADDR_ENEMY_LEVEL = 0xcff3; // wEnemyMonLevel (offset +14)
+export const ADDR_ENEMY_MAX_HP_HIGH = 0xcff4; // wEnemyMonMaxHP (offset +15, 2 bytes)
+export const ADDR_ENEMY_MAX_HP_LOW = 0xcff5;
 
 // Party data addresses
 const ADDR_PARTY_COUNT = 0xd163; // number of Pokemon in party (0-6)
@@ -333,7 +333,7 @@ export function extractPlayerPokemon(ram: ReadonlyArray<number>): PokemonState {
 	const maxHp = readWord(ram, ADDR_PLAYER_MAX_HP_HIGH);
 	const statusByte = ram[ADDR_PLAYER_STATUS] ?? 0;
 	const { condition } = decodeStatus(statusByte);
-	const level = ram[ADDR_PLAYER_LEVEL] ?? 1;
+	const level = ram[ADDR_PLAYER_LEVEL] || 1; // || instead of ?? to treat 0 as "unknown, default to 1"
 
 	// Stats estimated from level until full stat RAM extraction is implemented
 	const estimatedStat = Math.max(1, Math.floor(level * 1.5 + 20));
@@ -391,17 +391,18 @@ export function readParty(ram: ReadonlyArray<number>): Array<PokemonState> {
 export function extractOpponentPokemon(ram: ReadonlyArray<number>): OpponentState {
 	const enemyHp = readWord(ram, ADDR_ENEMY_HP_HIGH);
 	const enemyMaxHp = readWord(ram, ADDR_ENEMY_MAX_HP_HIGH);
-	const hpPercent = enemyMaxHp > 0 ? (enemyHp / enemyMaxHp) * 100 : 0;
+	const rawPercent = enemyMaxHp > 0 ? (enemyHp / enemyMaxHp) * 100 : 0;
+	const hpPercent = Math.min(Math.max(rawPercent, 0), 100);
 	const { condition } = decodeStatus(ram[ADDR_ENEMY_STATUS] ?? 0);
 
 	return {
 		species: decodeSpecies(ram[ADDR_ENEMY_SPECIES] ?? 0),
-		hp: enemyHp,
+		hp: Math.min(enemyHp, enemyMaxHp > 0 ? enemyMaxHp : enemyHp),
 		maxHp: enemyMaxHp > 0 ? enemyMaxHp : 1,
 		hpPercent: Math.round(hpPercent * 10) / 10,
 		status: condition,
 		types: decodeTypes(ram[ADDR_ENEMY_TYPE1] ?? 0, ram[ADDR_ENEMY_TYPE2] ?? 0),
-		level: ram[ADDR_ENEMY_LEVEL] ?? 1,
+		level: ram[ADDR_ENEMY_LEVEL] || 1, // || instead of ?? to treat 0 as "unknown, default to 1"
 	};
 }
 

@@ -99,38 +99,39 @@ export class MgbaEmulator implements GameBoyEmulator {
 		const fullRam = new Array<number>(0x10000).fill(0);
 
 		// All addresses used by memory-map.ts for battle + overworld state
+		// Addresses verified against pret/pokered battle_struct macro
 		const addresses = [
 			// Battle detection
 			0xd057,
 			0xd058,
-			// Player active pokemon
-			0xcfe5,
+			// Player active pokemon (wBattleMon @ 0xD014)
+			0xd014, // species
 			0xd015,
-			0xd016,
-			0xd017,
-			0xd018,
+			0xd016, // HP high/low
+			0xd018, // status
 			0xd019,
-			0xd01a,
-			0xd01b,
-			0xd022,
+			0xd01a, // type1, type2
 			0xd01c,
 			0xd01d,
 			0xd01e,
 			0xd01f, // 4 move IDs
+			0xd022, // level
+			0xd023,
+			0xd024, // maxHP high/low
 			0xd02d,
 			0xd02e,
 			0xd02f,
 			0xd030, // 4 PP values
-			// Enemy pokemon
+			// Enemy pokemon (wEnemyMon @ 0xCFE5)
+			0xcfe5, // species
 			0xcfe6,
-			0xcfe7,
-			0xcfe8,
-			0xd025,
-			0xd026,
-			0xcfe9,
-			0xd0ac,
-			0xd0ad,
-			0xcfeb,
+			0xcfe7, // HP high/low
+			0xcfe9, // status
+			0xcfea,
+			0xcfeb, // type1, type2
+			0xcff3, // level
+			0xcff4,
+			0xcff5, // maxHP high/low
 			// Overworld state
 			0xd361,
 			0xd362,
