@@ -42,8 +42,22 @@ function makeValidState(overrides?: Partial<BattleState>): BattleState {
 			status: StatusCondition.None,
 			types: [PokemonType.Normal],
 			level: 10,
+			attack: 56,
+			defense: 35,
+			specialAttack: 25,
+			specialDefense: 35,
+			speed: 72,
+			moves: [] as Array<{
+				name: string;
+				pokemonType: PokemonType;
+				power: number;
+				accuracy: number;
+				pp: number;
+				maxPp: number;
+				category: 'physical' | 'special' | 'status';
+			}>,
 		},
-		availableActions: ['move:0', 'run'],
+		availableActions: ['a', 'b'],
 		weather: 'clear',
 		turnHistory: [],
 		lastAction: null,

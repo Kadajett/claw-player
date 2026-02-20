@@ -92,41 +92,41 @@ describe('VoteAggregator', () => {
 		});
 
 		it('correctly tallies votes and picks winner', async () => {
-			const raw = ['move:0', '10', 'run', '5', 'switch:1', '3'];
+			const raw = ['a', '10', 'b', '5', 'up', '3'];
 			redis = makeMockRedis({ zrevrange: raw });
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			aggregator = new VoteAggregator(redis as any, mockLogger as any);
 
 			const result = await aggregator.tallyVotes('game-1', 5);
 
-			expect(result.winningAction).toBe('move:0');
+			expect(result.winningAction).toBe('a');
 			expect(result.totalVotes).toBe(18);
-			expect(result.voteCounts['move:0']).toBe(10);
-			expect(result.voteCounts.run).toBe(5);
-			expect(result.voteCounts['switch:1']).toBe(3);
+			expect(result.voteCounts.a).toBe(10);
+			expect(result.voteCounts.b).toBe(5);
+			expect(result.voteCounts.up).toBe(3);
 		});
 
 		it('ignores invalid action names in Redis', async () => {
-			const raw = ['move:0', '5', 'fly', '99'];
+			const raw = ['a', '5', 'fly', '99'];
 			redis = makeMockRedis({ zrevrange: raw });
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			aggregator = new VoteAggregator(redis as any, mockLogger as any);
 
 			const result = await aggregator.tallyVotes('game-1', 5);
 
-			expect(result.winningAction).toBe('move:0');
+			expect(result.winningAction).toBe('a');
 			expect(result.totalVotes).toBe(5);
 		});
 
 		it('ignores entries with non-numeric scores', async () => {
-			const raw = ['move:0', 'NaN', 'run', '3'];
+			const raw = ['a', 'NaN', 'b', '3'];
 			redis = makeMockRedis({ zrevrange: raw });
 			// biome-ignore lint/suspicious/noExplicitAny: test mock
 			aggregator = new VoteAggregator(redis as any, mockLogger as any);
 
 			const result = await aggregator.tallyVotes('game-1', 5);
 
-			expect(result.winningAction).toBe('run');
+			expect(result.winningAction).toBe('b');
 			expect(result.totalVotes).toBe(3);
 		});
 	});

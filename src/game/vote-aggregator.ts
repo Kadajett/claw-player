@@ -1,13 +1,13 @@
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 
-import { runVoteDedup, type VoteDedupResult } from '../redis/lua-scripts.js';
+import { type VoteDedupResult, runVoteDedup } from '../redis/lua-scripts.js';
 import {
 	ALL_GAME_ACTIONS,
 	type GameAction,
-	gameActionSchema,
 	VOTE_KEY_EXPIRY_SECONDS,
 	type VoteResult,
+	gameActionSchema,
 } from './types.js';
 
 const VOTES_KEY_PREFIX = 'votes:';
