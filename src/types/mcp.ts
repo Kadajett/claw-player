@@ -89,9 +89,9 @@ export const GetBattleStateOutput = z.object({
 	playerPokemon: ActivePokemon,
 	opponentPokemon: OpponentPokemon,
 	playerParty: z.array(PartyMember),
-	// Available actions this turn (respects disabled moves, fainted party members, etc.)
+	// Available actions: always all 8 GBC buttons
 	availableActions: z.array(z.string()),
-	// Type effectiveness multiplier for each available move action (key = "move:0", etc.)
+	// Context-specific hints keyed by button name
 	typeMatchups: z.record(z.string(), z.number()),
 	// Gamification
 	yourScore: z.number().nonnegative(),

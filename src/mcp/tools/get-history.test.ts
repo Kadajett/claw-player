@@ -8,10 +8,10 @@ const mockHistory: GetHistoryOutput = {
 	rounds: [
 		{
 			turn: 10,
-			winningAction: 'move:0',
-			actionCounts: { 'move:0': 5, 'move:1': 2, 'switch:1': 1 },
-			outcome: 'Thunderbolt hit Blastoise for 94 damage — super effective!',
-			yourAction: 'move:0',
+			winningAction: 'a',
+			actionCounts: { a: 5, down: 2, b: 1 },
+			outcome: 'Pressed A to confirm Thunderbolt. Hit Blastoise for 94 damage!',
+			yourAction: 'a',
 			yourPoints: 15,
 			timestamp: '2026-02-19T11:59:00.000Z',
 		},
@@ -78,8 +78,8 @@ describe('registerGetHistoryTool', () => {
 		const content = (result as { content: Array<{ type: string; text: string }> }).content[0];
 		const parsed = JSON.parse(content?.text ?? '{}') as GetHistoryOutput;
 		expect(parsed.rounds).toHaveLength(1);
-		expect(parsed.rounds[0]?.winningAction).toBe('move:0');
-		expect(parsed.rounds[0]?.outcome).toContain('super effective');
+		expect(parsed.rounds[0]?.winningAction).toBe('a');
+		expect(parsed.rounds[0]?.outcome).toContain('Thunderbolt');
 		expect(parsed.yourStats.winRate).toBe(0.7);
 		expect(parsed.leaderboard).toHaveLength(2);
 	});

@@ -44,8 +44,8 @@ const mockState: GetBattleStateOutput = {
 		types: ['Water'],
 	},
 	playerParty: [],
-	availableActions: ['move:0'],
-	typeMatchups: { 'move:0': 1.0 },
+	availableActions: ['a', 'b', 'up', 'down', 'left', 'right', 'start', 'select'],
+	typeMatchups: {},
 	yourScore: 100,
 	yourRank: 2,
 	totalAgents: 5,
@@ -123,7 +123,7 @@ describe('registerGetGameStateTool', () => {
 		expect(parsed.playerPokemon.name).toBe('Pikachu');
 		expect(parsed.opponentPokemon.name).toBe('Blastoise');
 		expect(parsed.streak).toBe(3);
-		expect(parsed.availableActions).toContain('move:0');
+		expect(parsed.availableActions).toContain('a');
 	});
 
 	it('tool handler returns isError when service throws', async () => {
