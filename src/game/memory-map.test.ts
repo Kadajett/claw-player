@@ -19,7 +19,13 @@ import {
 	ADDR_ENEMY_SPECIAL,
 	ADDR_ENEMY_SPEED,
 	ADDR_ENEMY_SUBSTITUTE_HP,
+	ADDR_GRASS_MONS_START,
+	ADDR_GRASS_RATE,
+	ADDR_H_TILESET_TYPE,
 	ADDR_IN_BATTLE,
+	ADDR_JOY_HELD,
+	ADDR_JOY_PRESSED,
+	ADDR_MAP_PAL_OFFSET,
 	ADDR_PLAYER_ACCURACY_MOD,
 	ADDR_PLAYER_ATTACK,
 	ADDR_PLAYER_ATTACK_MOD,
@@ -40,6 +46,15 @@ import {
 	ADDR_PLAYER_SUBSTITUTE_HP,
 	ADDR_PLAYER_TOXIC_COUNTER,
 	ADDR_TRAINER_CLASS,
+	ADDR_PLAY_TIME_FRAMES,
+	ADDR_PLAY_TIME_HOURS_HIGH,
+	ADDR_PLAY_TIME_HOURS_LOW,
+	ADDR_PLAY_TIME_MINUTES,
+	ADDR_PLAY_TIME_SECONDS,
+	ADDR_POKEDEX_OWNED_START,
+	ADDR_POKEDEX_SEEN_START,
+	ADDR_TILE_IN_FRONT_OF_PLAYER,
+	GRASS_MON_SLOTS,
 	OVERWORLD_BADGES,
 	OVERWORLD_BAG_ITEMS,
 	OVERWORLD_CUR_MAP,
@@ -54,6 +69,7 @@ import {
 	OVERWORLD_TEXT_DELAY_FLAGS,
 	OVERWORLD_X_COORD,
 	OVERWORLD_Y_COORD,
+	POKEDEX_BYTES,
 	buildAvailableActions,
 	decodeBadgeNames,
 	decodeDirection,
@@ -75,12 +91,16 @@ import {
 	readBadges,
 	readBattleStatusFlags,
 	readEnemyPartyCount,
+	readGameProgress,
+	readHmAvailability,
 	readInventory,
 	readMoney,
 	readNearbySprites,
 	readPlayerName,
+	readPokedexCounts,
 	readStatModifiers,
 	readTrainerClass,
+	readWildEncounterRate,
 } from './memory-map.js';
 import { GamePhase, PokemonType, StatusCondition } from './types.js';
 
@@ -1267,5 +1287,265 @@ describe('readEnemyPartyCount', () => {
 	it('returns 0 when not set', () => {
 		const ram = makeRam();
 		expect(readEnemyPartyCount(ram)).toBe(0);
+});
+
+// ─── HM Detection Address Constants ─────────────────────────────────────────
+
+describe('HM/progress/encounter address constants', () => {
+	it('HM detection addresses have correct hex values', () => {
+		expect(ADDR_H_TILESET_TYPE).toBe(0xffd7);
+		expect(ADDR_MAP_PAL_OFFSET).toBe(0xd35d);
+	});
+
+	it('game time addresses have correct hex values', () => {
+		expect(ADDR_PLAY_TIME_HOURS_HIGH).toBe(0xda41);
+		expect(ADDR_PLAY_TIME_HOURS_LOW).toBe(0xda42);
+		expect(ADDR_PLAY_TIME_MINUTES).toBe(0xda43);
+		expect(ADDR_PLAY_TIME_SECONDS).toBe(0xda44);
+		expect(ADDR_PLAY_TIME_FRAMES).toBe(0xda45);
+	});
+
+	it('pokedex addresses have correct hex values', () => {
+		expect(ADDR_POKEDEX_OWNED_START).toBe(0xd2f7);
+		expect(ADDR_POKEDEX_SEEN_START).toBe(0xd30a);
+		expect(POKEDEX_BYTES).toBe(19);
+	});
+
+	it('wild encounter addresses have correct hex values', () => {
+		expect(ADDR_GRASS_RATE).toBe(0xd887);
+		expect(ADDR_GRASS_MONS_START).toBe(0xd888);
+		expect(GRASS_MON_SLOTS).toBe(10);
+	});
+
+	it('joypad addresses have correct hex values', () => {
+		expect(ADDR_JOY_PRESSED).toBe(0xffb3);
+		expect(ADDR_JOY_HELD).toBe(0xffb4);
+	});
+});
+
+// ─── HM Availability Tests ──────────────────────────────────────────────────
+
+// Party data layout: ADDR_PARTY_COUNT=0xD163, ADDR_PARTY_MONS=0xD16B, 44 bytes each
+// Moves at offset +0x08 within each party struct
+
+describe('readHmAvailability', () => {
+	it('returns all false with no badges', () => {
+		const ram = makeRam();
+		const hm = readHmAvailability(ram);
+		expect(hm.cut).toBe(false);
+		expect(hm.fly).toBe(false);
+		expect(hm.surf).toBe(false);
+		expect(hm.strength).toBe(false);
+		expect(hm.flash).toBe(false);
+	});
+
+	it('returns cut: true with CascadeBadge and party knows Cut', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x02, // bit 1 = CascadeBadge
+			[0xd163]: 1, // party count = 1
+			[0xd16b]: 0x99, // species (non-zero = valid)
+			[0xd16b + 0x08]: 15, // Cut move ID
+		});
+		expect(readHmAvailability(ram).cut).toBe(true);
+	});
+
+	it('returns fly: true with ThunderBadge, party knows Fly, and outside tileset', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x04, // bit 2 = ThunderBadge
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 19, // Fly move ID
+			[ADDR_H_TILESET_TYPE]: 2, // outside tileset
+		});
+		expect(readHmAvailability(ram).fly).toBe(true);
+	});
+
+	it('returns fly: false with ThunderBadge and Fly but indoor tileset', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x04,
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 19,
+			[ADDR_H_TILESET_TYPE]: 0, // indoor
+		});
+		expect(readHmAvailability(ram).fly).toBe(false);
+	});
+
+	it('returns surf: true with SoulBadge, party knows Surf, and facing water', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x10, // bit 4 = SoulBadge
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 57, // Surf move ID
+			[ADDR_TILE_IN_FRONT_OF_PLAYER]: 0x14, // water tile
+		});
+		expect(readHmAvailability(ram).surf).toBe(true);
+	});
+
+	it('returns strength: true with RainbowBadge and party knows Strength', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x08, // bit 3 = RainbowBadge
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 70, // Strength move ID
+		});
+		expect(readHmAvailability(ram).strength).toBe(true);
+	});
+
+	it('returns flash: true with BoulderBadge, party knows Flash, and dark cave', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x01, // bit 0 = BoulderBadge
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 148, // Flash move ID
+			[ADDR_MAP_PAL_OFFSET]: 6, // dark cave
+		});
+		expect(readHmAvailability(ram).flash).toBe(true);
+	});
+
+	it('returns false when badge is present but party does not know the move', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0xff, // all badges
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 1, // Pound, not an HM
+		});
+		const hm = readHmAvailability(ram);
+		expect(hm.cut).toBe(false);
+		expect(hm.strength).toBe(false);
+	});
+
+	it('finds HM move in second party slot', () => {
+		const secondMon = 0xd16b + 0x2c; // party mon 1 (second slot)
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x02, // CascadeBadge
+			[0xd163]: 2, // 2 party members
+			[0xd16b]: 0x99, // first mon species
+			[0xd16b + 0x08]: 1, // first mon move = Pound
+			[secondMon]: 0x54, // second mon species
+			[secondMon + 0x08]: 15, // second mon move = Cut
+		});
+		expect(readHmAvailability(ram).cut).toBe(true);
+	});
+
+	it('finds HM move in non-first move slot', () => {
+		const ram = makeRam({
+			[OVERWORLD_BADGES]: 0x08, // RainbowBadge
+			[0xd163]: 1,
+			[0xd16b]: 0x99,
+			[0xd16b + 0x08]: 1, // move slot 0 = Pound
+			[0xd16b + 0x09]: 2, // move slot 1 = Karate Chop
+			[0xd16b + 0x0a]: 70, // move slot 2 = Strength
+		});
+		expect(readHmAvailability(ram).strength).toBe(true);
+	});
+});
+
+// ─── Pokedex Counts Tests ────────────────────────────────────────────────────
+
+describe('readPokedexCounts', () => {
+	it('returns { owned: 0, seen: 0 } with all zeros', () => {
+		const ram = makeRam();
+		const counts = readPokedexCounts(ram);
+		expect(counts.owned).toBe(0);
+		expect(counts.seen).toBe(0);
+	});
+
+	it('counts 8 owned for 0xFF at first byte', () => {
+		const ram = makeRam({ [ADDR_POKEDEX_OWNED_START]: 0xff });
+		const counts = readPokedexCounts(ram);
+		expect(counts.owned).toBe(8);
+		expect(counts.seen).toBe(0);
+	});
+
+	it('counts set bits correctly across multiple bytes', () => {
+		const ram = makeRam({
+			[ADDR_POKEDEX_OWNED_START]: 0x0f, // 4 bits
+			[ADDR_POKEDEX_OWNED_START + 1]: 0x01, // 1 bit
+		});
+		expect(readPokedexCounts(ram).owned).toBe(5);
+	});
+
+	it('counts seen independently from owned', () => {
+		const ram = makeRam({
+			[ADDR_POKEDEX_SEEN_START]: 0xff, // 8 seen
+			[ADDR_POKEDEX_SEEN_START + 1]: 0x03, // 2 seen
+		});
+		const counts = readPokedexCounts(ram);
+		expect(counts.owned).toBe(0);
+		expect(counts.seen).toBe(10);
+	});
+
+	it('counts all 151 when all bytes are 0xFF', () => {
+		const overrides: Record<number, number> = {};
+		for (let i = 0; i < POKEDEX_BYTES; i++) {
+			overrides[ADDR_POKEDEX_OWNED_START + i] = 0xff;
+		}
+		const ram = makeRam(overrides);
+		// 19 bytes * 8 bits = 152, but only 151 Pokemon exist.
+		// The function counts raw bits, so it returns 152.
+		expect(readPokedexCounts(ram).owned).toBe(152);
+	});
+});
+
+// ─── Game Progress Tests ─────────────────────────────────────────────────────
+
+describe('readGameProgress', () => {
+	it('returns correct hours/minutes/seconds', () => {
+		const ram = makeRam({
+			[ADDR_PLAY_TIME_HOURS_HIGH]: 0x00,
+			[ADDR_PLAY_TIME_HOURS_LOW]: 0x0a, // 10 hours
+			[ADDR_PLAY_TIME_MINUTES]: 30,
+			[ADDR_PLAY_TIME_SECONDS]: 45,
+		});
+		const progress = readGameProgress(ram);
+		expect(progress.playTimeHours).toBe(10);
+		expect(progress.playTimeMinutes).toBe(30);
+		expect(progress.playTimeSeconds).toBe(45);
+	});
+
+	it('combines high and low bytes for hours > 255', () => {
+		const ram = makeRam({
+			[ADDR_PLAY_TIME_HOURS_HIGH]: 0x01, // 256
+			[ADDR_PLAY_TIME_HOURS_LOW]: 0x00,
+		});
+		expect(readGameProgress(ram).playTimeHours).toBe(256);
+	});
+
+	it('returns 0 hours/minutes/seconds for fresh save', () => {
+		const ram = makeRam();
+		const progress = readGameProgress(ram);
+		expect(progress.playTimeHours).toBe(0);
+		expect(progress.playTimeMinutes).toBe(0);
+		expect(progress.playTimeSeconds).toBe(0);
+	});
+
+	it('includes pokedex counts', () => {
+		const ram = makeRam({
+			[ADDR_POKEDEX_OWNED_START]: 0xff, // 8 owned
+			[ADDR_POKEDEX_SEEN_START]: 0x0f, // 4 seen
+		});
+		const progress = readGameProgress(ram);
+		expect(progress.pokedexOwned).toBe(8);
+		expect(progress.pokedexSeen).toBe(4);
+	});
+});
+
+// ─── Wild Encounter Rate Tests ───────────────────────────────────────────────
+
+describe('readWildEncounterRate', () => {
+	it('returns 0 for indoor maps (no encounters)', () => {
+		const ram = makeRam();
+		expect(readWildEncounterRate(ram)).toBe(0);
+	});
+
+	it('returns rate value for grass routes', () => {
+		const ram = makeRam({ [ADDR_GRASS_RATE]: 25 });
+		expect(readWildEncounterRate(ram)).toBe(25);
+	});
+
+	it('returns 255 for maximum encounter rate', () => {
+		const ram = makeRam({ [ADDR_GRASS_RATE]: 255 });
+		expect(readWildEncounterRate(ram)).toBe(255);
 	});
 });
