@@ -9,6 +9,7 @@ function buildRedisOptions(_url: string): RedisOptions {
 		lazyConnect: true,
 		maxRetriesPerRequest: 3,
 		enableReadyCheck: true,
+		enableAutoPipelining: true,
 		retryStrategy(times: number): number | null {
 			if (times > RECONNECT_MAX_ATTEMPTS) {
 				return null;

@@ -10,7 +10,10 @@ import type { WsOutgoingMessage } from './types/api.js';
 
 const config = loadConfig();
 
-const pinoOptions: pino.LoggerOptions = { level: config.LOG_LEVEL };
+const pinoOptions: pino.LoggerOptions = {
+	level: config.LOG_LEVEL,
+	redact: ['req.headers["x-api-key"]', 'apiKey', 'rawKey'],
+};
 if (config.NODE_ENV !== 'production') {
 	pinoOptions.transport = { target: 'pino-pretty' };
 }
