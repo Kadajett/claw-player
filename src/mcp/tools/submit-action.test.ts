@@ -6,7 +6,8 @@ import { registerSubmitActionTool } from './submit-action.js';
 
 const mockResult: SubmitActionOutput = {
 	success: true,
-	outcome: 'Claw moved left, approaching prize',
+	outcome:
+		'You voted move:0 (Thunderbolt). Current tally: move:0: 5 votes, switch:1: 1 vote. You are with the majority!',
 	pointsEarned: 15,
 	newScore: 215,
 	newRank: 2,
@@ -17,7 +18,7 @@ const mockResult: SubmitActionOutput = {
 
 function makeService(result: SubmitActionOutput = mockResult): GameStateService {
 	return {
-		getGameState: vi.fn(),
+		getBattleState: vi.fn(),
 		submitAction: vi.fn().mockResolvedValue(result),
 		getRateLimit: vi.fn(),
 		getHistory: vi.fn(),
@@ -42,11 +43,10 @@ function captureHandler<T>(
 describe('registerSubmitActionTool', () => {
 	it('registers submit_action tool on the server', () => {
 		const server = new McpServer({ name: 'test', version: '0.0.1' });
-		const service = makeService();
-		registerSubmitActionTool(server, service);
+		registerSubmitActionTool(server, makeService());
 	});
 
-	it('tool handler submits action for authenticated agent', async () => {
+	it('tool handler submits Pokemon move action', async () => {
 		const server = new McpServer({ name: 'test', version: '0.0.1' });
 		const service = makeService();
 		const captured = captureHandler<{ action: string }>(server, 'submit_action');
@@ -56,16 +56,30 @@ describe('registerSubmitActionTool', () => {
 		expect(captured.handler).toBeDefined();
 
 		const result = await requestContext.run({ agentId: 'agent-test' }, async () => {
-			return captured.handler?.({ action: 'left' });
+			return captured.handler?.({ action: 'move:0' });
 		});
 
-		expect(service.submitAction).toHaveBeenCalledWith('agent-test', 'left');
+		expect(service.submitAction).toHaveBeenCalledWith('agent-test', 'move:0');
 
 		const content = (result as { content: Array<{ type: string; text: string }> }).content[0];
 		const parsed = JSON.parse(content?.text ?? '{}') as SubmitActionOutput;
 		expect(parsed.success).toBe(true);
 		expect(parsed.pointsEarned).toBe(15);
-		expect(parsed.rankChange).toBe('0');
+		expect(parsed.outcome).toContain('Thunderbolt');
+	});
+
+	it('tool handler submits switch action', async () => {
+		const server = new McpServer({ name: 'test', version: '0.0.1' });
+		const service = makeService();
+		const captured = captureHandler<{ action: string }>(server, 'submit_action');
+
+		registerSubmitActionTool(server, service);
+
+		await requestContext.run({ agentId: 'agent-test' }, async () => {
+			return captured.handler?.({ action: 'switch:2' });
+		});
+
+		expect(service.submitAction).toHaveBeenCalledWith('agent-test', 'switch:2');
 	});
 
 	it('tool handler returns isError when service throws', async () => {
@@ -77,7 +91,7 @@ describe('registerSubmitActionTool', () => {
 		registerSubmitActionTool(server, service);
 
 		const result = await requestContext.run({ agentId: 'agent-test' }, async () => {
-			return captured.handler?.({ action: 'grab' });
+			return captured.handler?.({ action: 'move:1' });
 		});
 
 		expect(result).toMatchObject({ isError: true });

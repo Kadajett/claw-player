@@ -1,24 +1,71 @@
 import { z } from 'zod';
 
-export const GameAction = z.enum(['up', 'down', 'left', 'right', 'grab']);
-export type GameAction = z.infer<typeof GameAction>;
+// Pokemon battle actions
+// move:0-3 = use the attack at that index in the active Pokemon's move list
+// switch:0-5 = swap active Pokemon for the party member at that index
+// run = attempt to flee the battle
+export const PokemonAction = z.union([
+	z.string().regex(/^move:[0-3]$/, 'Use move by index: move:0 through move:3'),
+	z.string().regex(/^switch:[0-5]$/, 'Switch Pokemon by party index: switch:0 through switch:5'),
+	z.literal('run'),
+]);
+export type PokemonAction = z.infer<typeof PokemonAction>;
 
-export const ClawPosition = z.object({
-	x: z.number().min(0).max(100),
-	y: z.number().min(0).max(100),
-});
-export type ClawPosition = z.infer<typeof ClawPosition>;
-
-export const Prize = z.object({
-	id: z.string(),
+// Individual move slot (up to 4 per Pokemon)
+export const Move = z.object({
+	index: z.number().min(0).max(3),
 	name: z.string(),
-	value: z.number().positive(),
-	position: z.object({
-		x: z.number(),
-		y: z.number(),
-	}),
+	type: z.string(),
+	pp: z.number().nonnegative(),
+	maxPp: z.number().positive(),
+	power: z.number().nullable(),
+	accuracy: z.number().nullable(),
+	category: z.enum(['physical', 'special', 'status']),
+	disabled: z.boolean(),
 });
-export type Prize = z.infer<typeof Prize>;
+export type Move = z.infer<typeof Move>;
+
+// The active player Pokemon in battle
+export const ActivePokemon = z.object({
+	name: z.string(),
+	species: z.string(),
+	level: z.number().positive(),
+	currentHp: z.number().nonnegative(),
+	maxHp: z.number().positive(),
+	hpPercent: z.number().min(0).max(100),
+	status: z.string().nullable(),
+	types: z.array(z.string()).min(1).max(2),
+	moves: z.array(Move).max(4),
+});
+export type ActivePokemon = z.infer<typeof ActivePokemon>;
+
+// The opponent Pokemon (less info since we can't see their full moveset in Gen 1)
+export const OpponentPokemon = z.object({
+	name: z.string(),
+	species: z.string(),
+	level: z.number().positive(),
+	currentHp: z.number().nonnegative(),
+	maxHp: z.number().positive(),
+	hpPercent: z.number().min(0).max(100),
+	status: z.string().nullable(),
+	types: z.array(z.string()).min(1).max(2),
+});
+export type OpponentPokemon = z.infer<typeof OpponentPokemon>;
+
+// Party member shown in get_game_state (non-active Pokemon)
+export const PartyMember = z.object({
+	partyIndex: z.number().min(0).max(5),
+	name: z.string(),
+	species: z.string(),
+	currentHp: z.number().nonnegative(),
+	maxHp: z.number().positive(),
+	hpPercent: z.number().min(0).max(100),
+	status: z.string().nullable(),
+	types: z.array(z.string()).min(1).max(2),
+	fainted: z.boolean(),
+	isActive: z.boolean(),
+});
+export type PartyMember = z.infer<typeof PartyMember>;
 
 export const AchievementProgress = z.object({
 	id: z.string(),
@@ -38,16 +85,22 @@ export const LeaderboardEntry = z.object({
 });
 export type LeaderboardEntry = z.infer<typeof LeaderboardEntry>;
 
-export const GamePhase = z.enum(['voting', 'executing', 'idle', 'bonus_round']);
-export type GamePhase = z.infer<typeof GamePhase>;
-
 // Tool: get_game_state
-export const GetGameStateOutput = z.object({
-	round: z.number().nonnegative(),
-	phase: GamePhase,
+// Returns the full Pokemon battle state with gamification hooks
+export const GetBattleStateOutput = z.object({
+	turn: z.number().nonnegative(),
+	phase: z.enum(['voting', 'executing', 'idle']),
 	secondsRemaining: z.number().nonnegative(),
-	clawPosition: ClawPosition,
-	prizes: z.array(Prize),
+	isPlayerTurn: z.boolean(),
+	weather: z.string().nullable(),
+	playerPokemon: ActivePokemon,
+	opponentPokemon: OpponentPokemon,
+	playerParty: z.array(PartyMember),
+	// Available actions this turn (respects disabled moves, fainted party members, etc.)
+	availableActions: z.array(z.string()),
+	// Type effectiveness multiplier for each available move action (key = "move:0", etc.)
+	typeMatchups: z.record(z.string(), z.number()),
+	// Gamification
 	yourScore: z.number().nonnegative(),
 	yourRank: z.number().positive(),
 	totalAgents: z.number().nonnegative(),
@@ -57,11 +110,15 @@ export const GetGameStateOutput = z.object({
 	nextBonusRoundIn: z.number().nonnegative(),
 	tip: z.string(),
 });
-export type GetGameStateOutput = z.infer<typeof GetGameStateOutput>;
+export type GetBattleStateOutput = z.infer<typeof GetBattleStateOutput>;
+
+// Kept for backward compatibility alias
+export const GetGameStateOutput = GetBattleStateOutput;
+export type GetGameStateOutput = GetBattleStateOutput;
 
 // Tool: submit_action
 export const SubmitActionInput = z.object({
-	action: GameAction,
+	action: PokemonAction,
 });
 export type SubmitActionInput = z.infer<typeof SubmitActionInput>;
 
@@ -102,28 +159,19 @@ export const GetHistoryInput = z.object({
 });
 export type GetHistoryInput = z.infer<typeof GetHistoryInput>;
 
-export const ActionCounts = z.object({
-	up: z.number().nonnegative(),
-	down: z.number().nonnegative(),
-	left: z.number().nonnegative(),
-	right: z.number().nonnegative(),
-	grab: z.number().nonnegative(),
-});
-export type ActionCounts = z.infer<typeof ActionCounts>;
-
-export const RoundHistoryEntry = z.object({
-	round: z.number().nonnegative(),
-	winningAction: GameAction,
-	actionCounts: ActionCounts,
+export const BattleRoundEntry = z.object({
+	turn: z.number().nonnegative(),
+	winningAction: z.string(),
+	actionCounts: z.record(z.string(), z.number().nonnegative()),
 	outcome: z.string(),
-	yourAction: GameAction.optional(),
+	yourAction: z.string().optional(),
 	yourPoints: z.number(),
 	timestamp: z.string().datetime(),
 });
-export type RoundHistoryEntry = z.infer<typeof RoundHistoryEntry>;
+export type BattleRoundEntry = z.infer<typeof BattleRoundEntry>;
 
 export const AgentStats = z.object({
-	totalRounds: z.number().nonnegative(),
+	totalTurns: z.number().nonnegative(),
 	wins: z.number().nonnegative(),
 	winRate: z.number().min(0).max(1),
 	bestStreak: z.number().nonnegative(),
@@ -133,16 +181,16 @@ export const AgentStats = z.object({
 export type AgentStats = z.infer<typeof AgentStats>;
 
 export const GetHistoryOutput = z.object({
-	rounds: z.array(RoundHistoryEntry),
+	rounds: z.array(BattleRoundEntry),
 	leaderboard: z.array(LeaderboardEntry).optional(),
 	yourStats: AgentStats,
 });
 export type GetHistoryOutput = z.infer<typeof GetHistoryOutput>;
 
-// Service interfaces used by MCP tools
+// Service interface implemented by the game engine module
 export interface GameStateService {
-	getGameState(agentId: string): Promise<GetGameStateOutput>;
-	submitAction(agentId: string, action: GameAction): Promise<SubmitActionOutput>;
+	getBattleState(agentId: string): Promise<GetBattleStateOutput>;
+	submitAction(agentId: string, action: string): Promise<SubmitActionOutput>;
 	getRateLimit(agentId: string): Promise<GetRateLimitOutput>;
 	getHistory(agentId: string, limit: number, includeLeaderboard: boolean): Promise<GetHistoryOutput>;
 }

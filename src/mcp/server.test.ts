@@ -1,14 +1,50 @@
 import type http from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GameStateService, GetGameStateOutput, GetHistoryOutput, GetRateLimitOutput } from '../types/mcp.js';
+import type { GameStateService, GetBattleStateOutput, GetHistoryOutput, GetRateLimitOutput } from '../types/mcp.js';
 import { createMcpHttpServer } from './server.js';
 
-const mockGameState: GetGameStateOutput = {
-	round: 1,
+const mockBattleState: GetBattleStateOutput = {
+	turn: 1,
 	phase: 'voting',
 	secondsRemaining: 10,
-	clawPosition: { x: 50, y: 50 },
-	prizes: [],
+	isPlayerTurn: true,
+	weather: null,
+	playerPokemon: {
+		name: 'Pikachu',
+		species: 'Pikachu',
+		level: 25,
+		currentHp: 52,
+		maxHp: 52,
+		hpPercent: 100,
+		status: null,
+		types: ['Electric'],
+		moves: [
+			{
+				index: 0,
+				name: 'Thunderbolt',
+				type: 'Electric',
+				pp: 15,
+				maxPp: 24,
+				power: 95,
+				accuracy: 100,
+				category: 'special',
+				disabled: false,
+			},
+		],
+	},
+	opponentPokemon: {
+		name: 'Blastoise',
+		species: 'Blastoise',
+		level: 36,
+		currentHp: 134,
+		maxHp: 134,
+		hpPercent: 100,
+		status: null,
+		types: ['Water'],
+	},
+	playerParty: [],
+	availableActions: ['move:0'],
+	typeMatchups: { 'move:0': 1.0 },
 	yourScore: 0,
 	yourRank: 1,
 	totalAgents: 1,
@@ -16,7 +52,7 @@ const mockGameState: GetGameStateOutput = {
 	achievementsPending: [],
 	leaderboard: [],
 	nextBonusRoundIn: 10,
-	tip: 'Welcome to Claw Player!',
+	tip: 'Use Thunderbolt to deal damage.',
 };
 
 const mockRateLimit: GetRateLimitOutput = {
@@ -29,8 +65,9 @@ const mockRateLimit: GetRateLimitOutput = {
 
 const mockHistory: GetHistoryOutput = {
 	rounds: [],
+	leaderboard: [],
 	yourStats: {
-		totalRounds: 0,
+		totalTurns: 0,
 		wins: 0,
 		winRate: 0,
 		bestStreak: 0,
@@ -41,10 +78,10 @@ const mockHistory: GetHistoryOutput = {
 
 function makeService(): GameStateService {
 	return {
-		getGameState: vi.fn().mockResolvedValue(mockGameState),
+		getBattleState: vi.fn().mockResolvedValue(mockBattleState),
 		submitAction: vi.fn().mockResolvedValue({
 			success: true,
-			outcome: 'ok',
+			outcome: 'You voted move:0 (Thunderbolt). Tally: move:0: 1 vote.',
 			pointsEarned: 10,
 			newScore: 10,
 			newRank: 1,

@@ -7,11 +7,11 @@ import { registerGetHistoryTool } from './get-history.js';
 const mockHistory: GetHistoryOutput = {
 	rounds: [
 		{
-			round: 10,
-			winningAction: 'left',
-			actionCounts: { up: 1, down: 2, left: 5, right: 2, grab: 0 },
-			outcome: 'Claw moved left',
-			yourAction: 'left',
+			turn: 10,
+			winningAction: 'move:0',
+			actionCounts: { 'move:0': 5, 'move:1': 2, 'switch:1': 1 },
+			outcome: 'Thunderbolt hit Blastoise for 94 damage — super effective!',
+			yourAction: 'move:0',
 			yourPoints: 15,
 			timestamp: '2026-02-19T11:59:00.000Z',
 		},
@@ -21,7 +21,7 @@ const mockHistory: GetHistoryOutput = {
 		{ rank: 2, agentId: 'agent-test', score: 200, isCurrentAgent: true },
 	],
 	yourStats: {
-		totalRounds: 10,
+		totalTurns: 10,
 		wins: 7,
 		winRate: 0.7,
 		bestStreak: 5,
@@ -32,7 +32,7 @@ const mockHistory: GetHistoryOutput = {
 
 function makeService(history: GetHistoryOutput = mockHistory): GameStateService {
 	return {
-		getGameState: vi.fn(),
+		getBattleState: vi.fn(),
 		submitAction: vi.fn(),
 		getRateLimit: vi.fn(),
 		getHistory: vi.fn().mockResolvedValue(history),
@@ -60,7 +60,7 @@ describe('registerGetHistoryTool', () => {
 		registerGetHistoryTool(server, makeService());
 	});
 
-	it('tool handler returns history with provided args', async () => {
+	it('tool handler returns battle history with Pokemon outcomes', async () => {
 		const server = new McpServer({ name: 'test', version: '0.0.1' });
 		const service = makeService();
 		const captured = captureHandler<{ limit: number; includeLeaderboard: boolean }>(server, 'get_history');
@@ -78,6 +78,8 @@ describe('registerGetHistoryTool', () => {
 		const content = (result as { content: Array<{ type: string; text: string }> }).content[0];
 		const parsed = JSON.parse(content?.text ?? '{}') as GetHistoryOutput;
 		expect(parsed.rounds).toHaveLength(1);
+		expect(parsed.rounds[0]?.winningAction).toBe('move:0');
+		expect(parsed.rounds[0]?.outcome).toContain('super effective');
 		expect(parsed.yourStats.winRate).toBe(0.7);
 		expect(parsed.leaderboard).toHaveLength(2);
 	});

@@ -14,7 +14,7 @@ const mockStatus: GetRateLimitOutput = {
 
 function makeService(status: GetRateLimitOutput = mockStatus): GameStateService {
 	return {
-		getGameState: vi.fn(),
+		getBattleState: vi.fn(),
 		submitAction: vi.fn(),
 		getRateLimit: vi.fn().mockResolvedValue(status),
 		getHistory: vi.fn(),
@@ -44,7 +44,7 @@ describe('registerGetRateLimitTool', () => {
 		registerGetRateLimitTool(server, makeService());
 	});
 
-	it('tool handler returns rate limit status', async () => {
+	it('tool handler returns rate limit status for the current agent', async () => {
 		const server = new McpServer({ name: 'test', version: '0.0.1' });
 		const service = makeService();
 		const captured = captureHandler(server, 'get_rate_limit');
@@ -64,6 +64,7 @@ describe('registerGetRateLimitTool', () => {
 		expect(parsed.requestsRemaining).toBe(18);
 		expect(parsed.requestsPerSecond).toBe(20);
 		expect(parsed.burstCapacity).toBe(30);
+		expect(parsed.resetAt).toBe('2026-02-19T12:01:00.000Z');
 	});
 
 	it('tool handler returns isError when service throws', async () => {
