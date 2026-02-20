@@ -1,13 +1,13 @@
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 
-import { type VoteDedupResult, runVoteDedup } from '../redis/lua-scripts.js';
+import { runVoteDedup, type VoteDedupResult } from '../redis/lua-scripts.js';
 import {
-	type BattleAction,
-	DEFAULT_FALLBACK_ACTION,
+	ALL_GAME_ACTIONS,
+	type GameAction,
+	gameActionSchema,
 	VOTE_KEY_EXPIRY_SECONDS,
 	type VoteResult,
-	battleActionSchema,
 } from './types.js';
 
 const VOTES_KEY_PREFIX = 'votes:';
@@ -30,7 +30,7 @@ export class VoteAggregator {
 		return `${AGENT_VOTES_KEY_PREFIX}${gameId}:${tickId}`;
 	}
 
-	async recordVote(gameId: string, tickId: number, agentId: string, action: BattleAction): Promise<VoteDedupResult> {
+	async recordVote(gameId: string, tickId: number, agentId: string, action: GameAction): Promise<VoteDedupResult> {
 		const tallyKey = this.voteKey(gameId, tickId);
 		const agentKey = this.agentVoteKey(gameId, tickId);
 
@@ -46,7 +46,7 @@ export class VoteAggregator {
 
 		const voteCounts: Record<string, number> = {};
 		let totalVotes = 0;
-		let winningAction: BattleAction = DEFAULT_FALLBACK_ACTION;
+		let winningAction: GameAction = ALL_GAME_ACTIONS[0] ?? 'up';
 		let highestCount = 0;
 
 		for (let i = 0; i < raw.length - 1; i += 2) {
@@ -57,7 +57,7 @@ export class VoteAggregator {
 			const count = Number.parseInt(scoreStr, 10);
 			if (Number.isNaN(count)) continue;
 
-			const parsed = battleActionSchema.safeParse(member);
+			const parsed = gameActionSchema.safeParse(member);
 			if (!parsed.success) continue;
 
 			const action = parsed.data;
@@ -81,7 +81,7 @@ export class VoteAggregator {
 		this.logger.debug({ gameId, tickId }, 'Votes cleared');
 	}
 
-	async getVoteCount(gameId: string, tickId: number, action: BattleAction): Promise<number> {
+	async getVoteCount(gameId: string, tickId: number, action: GameAction): Promise<number> {
 		const key = this.voteKey(gameId, tickId);
 		const score = await this.redis.zscore(key, action);
 		if (!score) return 0;

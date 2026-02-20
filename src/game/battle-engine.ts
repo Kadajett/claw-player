@@ -3,11 +3,11 @@ import {
 	type BattleAction,
 	BattlePhase,
 	type BattleState,
-	DEFAULT_FALLBACK_ACTION,
+	battleActionSchema,
+	type GameAction,
 	type PokemonState,
 	StatusCondition,
 	type TurnHistoryEntry,
-	battleActionSchema,
 } from './types.js';
 
 // Gen 1 damage formula constants
@@ -94,7 +94,7 @@ export function applyStatusDamage(pokemon: PokemonState): PokemonState {
 	return { ...pokemon, hp: newHp };
 }
 
-export function computeAvailableActions(state: BattleState): Array<BattleAction> {
+export function computeAvailableActions(state: BattleState): Array<GameAction> {
 	const actions: Array<BattleAction> = [];
 
 	state.playerActive.moves.forEach((move, i) => {
@@ -112,7 +112,7 @@ export function computeAvailableActions(state: BattleState): Array<BattleAction>
 	});
 
 	actions.push('run');
-	return actions.length > 0 ? actions : [DEFAULT_FALLBACK_ACTION];
+	return (actions.length > 0 ? actions : ['move:0']) as unknown as Array<GameAction>;
 }
 
 function applyRunAction(state: BattleState, action: BattleAction): ActionResult {
@@ -121,7 +121,7 @@ function applyRunAction(state: BattleState, action: BattleAction): ActionResult 
 			...state,
 			phase: BattlePhase.BattleOver,
 			lastAction: action,
-			availableActions: [],
+			availableActions: [] as Array<GameAction>,
 		},
 		description: 'The trainer ran away!',
 	};
@@ -137,7 +137,7 @@ function applySwitchAction(state: BattleState, action: BattleAction, index: numb
 		playerActive: switchTarget,
 		phase: BattlePhase.ChooseAction,
 		lastAction: action,
-		availableActions: [] as Array<BattleAction>,
+		availableActions: [] as Array<GameAction>,
 	};
 	return {
 		newState: { ...newState, availableActions: computeAvailableActions(newState) },
@@ -241,6 +241,6 @@ export function applyAction(state: BattleState, action: BattleAction, totalVotes
 	};
 }
 
-export function buildInitialActions(state: BattleState): Array<BattleAction> {
+export function buildInitialActions(state: BattleState): Array<GameAction> {
 	return computeAvailableActions(state);
 }

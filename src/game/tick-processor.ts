@@ -4,9 +4,9 @@ import { applyAction } from './battle-engine.js';
 import { getButtonSequence } from './button-sequences.js';
 import type { GameBoyEmulator } from './emulator-interface.js';
 import { extractBattleState } from './memory-map.js';
-import { StatePoller } from './state-poller.js';
 import type { StateManager } from './state.js';
-import { type BattleState, DEFAULT_FALLBACK_ACTION, type TickResult } from './types.js';
+import { StatePoller } from './state-poller.js';
+import type { BattleState, TickResult } from './types.js';
 import type { VoteAggregator } from './vote-aggregator.js';
 
 export type TickCallback = (state: BattleState) => Promise<void> | void;
@@ -108,7 +108,7 @@ export class TickProcessor {
 		// Filter winning action to only valid actions
 		const actionToApply = previousState.availableActions.includes(voteResult.winningAction)
 			? voteResult.winningAction
-			: DEFAULT_FALLBACK_ACTION;
+			: (previousState.availableActions[0] ?? voteResult.winningAction);
 
 		let newState: BattleState;
 		let description: string;
@@ -120,7 +120,11 @@ export class TickProcessor {
 			description = result.description;
 		} else {
 			// Simulation path: pure state machine (original behavior)
-			const result = applyAction(previousState, actionToApply, voteResult.totalVotes);
+			const result = applyAction(
+				previousState,
+				actionToApply as unknown as import('./types.js').BattleAction,
+				voteResult.totalVotes,
+			);
 			newState = result.newState;
 			description = result.description;
 		}

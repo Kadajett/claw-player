@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	ALL_GAME_ACTIONS,
 	BattlePhase,
-	DEFAULT_FALLBACK_ACTION,
-	DEFAULT_TICK_INTERVAL_MS,
-	GamePhase,
-	PokemonType,
-	SNAPSHOT_INTERVAL,
-	StatusCondition,
-	VALID_MOVE_INDICES,
-	VALID_SWITCH_INDICES,
-	VOTE_KEY_EXPIRY_SECONDS,
 	battleActionSchema,
 	battlePhaseSchema,
 	battleStateSchema,
+	DEFAULT_TICK_INTERVAL_MS,
 	directionSchema,
+	GamePhase,
+	gameActionSchema,
+	gameActionToGbButton,
 	gamePhaseSchema,
 	gameStateSchema,
 	inventoryItemSchema,
@@ -24,10 +20,16 @@ import {
 	npcInfoSchema,
 	overworldActionSchema,
 	overworldStateSchema,
+	PokemonType,
 	playerInfoSchema,
 	pokemonStateSchema,
 	pokemonTypeSchema,
+	SNAPSHOT_INTERVAL,
+	StatusCondition,
 	statusConditionSchema,
+	VALID_MOVE_INDICES,
+	VALID_SWITCH_INDICES,
+	VOTE_KEY_EXPIRY_SECONDS,
 	voteResultSchema,
 	voteSchema,
 } from './types.js';
@@ -44,18 +46,65 @@ describe('constants', () => {
 	it('has positive DEFAULT_TICK_INTERVAL_MS', () => {
 		expect(DEFAULT_TICK_INTERVAL_MS).toBeGreaterThan(0);
 	});
+});
 
+describe('gameActionSchema', () => {
+	it('accepts all 8 button actions', () => {
+		for (const action of ['up', 'down', 'left', 'right', 'a', 'b', 'start', 'select']) {
+			expect(gameActionSchema.safeParse(action).success).toBe(true);
+		}
+	});
+
+	it('rejects old BattleAction values', () => {
+		expect(gameActionSchema.safeParse('move:0').success).toBe(false);
+		expect(gameActionSchema.safeParse('switch:3').success).toBe(false);
+		expect(gameActionSchema.safeParse('run').success).toBe(false);
+		expect(gameActionSchema.safeParse('a_button').success).toBe(false);
+	});
+
+	it('rejects empty string and arbitrary values', () => {
+		expect(gameActionSchema.safeParse('').success).toBe(false);
+		expect(gameActionSchema.safeParse('jump').success).toBe(false);
+	});
+});
+
+describe('ALL_GAME_ACTIONS', () => {
+	it('has length 8', () => {
+		expect(ALL_GAME_ACTIONS).toHaveLength(8);
+	});
+
+	it('contains all expected buttons', () => {
+		expect(ALL_GAME_ACTIONS).toContain('up');
+		expect(ALL_GAME_ACTIONS).toContain('down');
+		expect(ALL_GAME_ACTIONS).toContain('left');
+		expect(ALL_GAME_ACTIONS).toContain('right');
+		expect(ALL_GAME_ACTIONS).toContain('a');
+		expect(ALL_GAME_ACTIONS).toContain('b');
+		expect(ALL_GAME_ACTIONS).toContain('start');
+		expect(ALL_GAME_ACTIONS).toContain('select');
+	});
+});
+
+describe('gameActionToGbButton', () => {
+	it('maps all 8 actions to correct GbButton values', () => {
+		expect(gameActionToGbButton('up')).toBe('UP');
+		expect(gameActionToGbButton('down')).toBe('DOWN');
+		expect(gameActionToGbButton('left')).toBe('LEFT');
+		expect(gameActionToGbButton('right')).toBe('RIGHT');
+		expect(gameActionToGbButton('a')).toBe('A');
+		expect(gameActionToGbButton('b')).toBe('B');
+		expect(gameActionToGbButton('start')).toBe('START');
+		expect(gameActionToGbButton('select')).toBe('SELECT');
+	});
+});
+
+describe('constants (VALID_MOVE_INDICES)', () => {
 	it('has valid VALID_MOVE_INDICES', () => {
 		expect(VALID_MOVE_INDICES).toEqual([0, 1, 2, 3]);
 	});
 
 	it('has valid VALID_SWITCH_INDICES', () => {
 		expect(VALID_SWITCH_INDICES).toEqual([0, 1, 2, 3, 4, 5]);
-	});
-
-	it('DEFAULT_FALLBACK_ACTION is a valid move action', () => {
-		const parsed = battleActionSchema.safeParse(DEFAULT_FALLBACK_ACTION);
-		expect(parsed.success).toBe(true);
 	});
 });
 
@@ -213,7 +262,7 @@ describe('battlePhaseSchema', () => {
 describe('voteSchema', () => {
 	const valid = {
 		agentId: 'agent-1',
-		action: 'move:0',
+		action: 'a',
 		tickId: 5,
 		gameId: 'game-1',
 		timestamp: Date.now(),
@@ -230,14 +279,19 @@ describe('voteSchema', () => {
 	it('rejects invalid action', () => {
 		expect(voteSchema.safeParse({ ...valid, action: 'fly' }).success).toBe(false);
 	});
+
+	it('rejects old BattleAction values', () => {
+		expect(voteSchema.safeParse({ ...valid, action: 'move:0' }).success).toBe(false);
+		expect(voteSchema.safeParse({ ...valid, action: 'run' }).success).toBe(false);
+	});
 });
 
 describe('voteResultSchema', () => {
 	const valid = {
 		tickId: 3,
 		gameId: 'game-1',
-		winningAction: 'move:0',
-		voteCounts: { 'move:0': 5, run: 2 },
+		winningAction: 'a',
+		voteCounts: { a: 5, b: 2 },
 		totalVotes: 7,
 	};
 
@@ -277,7 +331,7 @@ describe('battleStateSchema', () => {
 			types: ['normal'],
 			level: 10,
 		},
-		availableActions: ['move:0', 'run'],
+		availableActions: ['a', 'b'],
 		weather: 'clear',
 		turnHistory: [],
 		lastAction: null,
@@ -337,9 +391,14 @@ describe('overworldActionSchema', () => {
 	});
 
 	it('accepts button actions', () => {
-		for (const action of ['a_button', 'b_button', 'start', 'select']) {
+		for (const action of ['a', 'b', 'start', 'select']) {
 			expect(overworldActionSchema.safeParse(action).success).toBe(true);
 		}
+	});
+
+	it('rejects old a_button/b_button values', () => {
+		expect(overworldActionSchema.safeParse('a_button').success).toBe(false);
+		expect(overworldActionSchema.safeParse('b_button').success).toBe(false);
 	});
 
 	it('rejects invalid action', () => {
@@ -563,7 +622,7 @@ describe('gameStateSchema', () => {
 			types: ['normal'],
 			level: 10,
 		},
-		availableActions: ['move:0'],
+		availableActions: ['a'],
 		weather: 'clear',
 		turnHistory: [],
 		lastAction: null,

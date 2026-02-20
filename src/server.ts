@@ -139,7 +139,7 @@ if (config.RELAY_MODE === 'client') {
 					batch.gameId,
 					batch.tickId,
 					vote.agentId,
-					vote.action as import('./game/types.js').BattleAction,
+					vote.action as import('./game/types.js').GameAction,
 				);
 			}
 			logger.info(
@@ -416,7 +416,7 @@ app.post('/api/v1/vote', (res: HttpResponse, req: HttpRequest) => {
 				GAME_ID,
 				tickId,
 				auth.agent.agentId,
-				action as import('./game/types.js').BattleAction,
+				action as import('./game/types.js').GameAction,
 			);
 
 			logger.debug({ agentId: auth.agent.agentId, action, tickId, status: dedupResult.status }, 'vote recorded');
