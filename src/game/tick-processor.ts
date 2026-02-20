@@ -98,6 +98,13 @@ export class TickProcessor {
 		// Tally votes
 		const voteResult = await this.voteAggregator.tallyVotes(gameId, currentTickId);
 
+		// No votes: skip action, just re-push current state so agents stay in sync
+		if (voteResult.totalVotes === 0) {
+			this.logger.debug({ gameId, turn: currentTickId }, 'No votes this tick, skipping action');
+			await this.notifyCallbacks(previousState);
+			return null;
+		}
+
 		// Filter winning action to only valid actions
 		const actionToApply = previousState.availableActions.includes(voteResult.winningAction)
 			? voteResult.winningAction
@@ -154,13 +161,7 @@ export class TickProcessor {
 		);
 
 		// Notify tick callbacks (e.g., relay home client)
-		for (const cb of this.tickCallbacks) {
-			try {
-				await cb(newState);
-			} catch (err) {
-				this.logger.error({ err }, 'Tick callback error');
-			}
-		}
+		await this.notifyCallbacks(newState);
 
 		// Auto-stop when battle is over
 		if (newState.phase === 'battle_over') {
@@ -168,6 +169,16 @@ export class TickProcessor {
 		}
 
 		return result;
+	}
+
+	private async notifyCallbacks(state: BattleState): Promise<void> {
+		for (const cb of this.tickCallbacks) {
+			try {
+				await cb(state);
+			} catch (err) {
+				this.logger.error({ err }, 'Tick callback error');
+			}
+		}
 	}
 
 	private async executeOnRealEmulator(

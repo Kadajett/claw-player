@@ -9,6 +9,7 @@ import { checkAutoEscalation, checkBan, recordViolation } from '../auth/ban.js';
 import { extractIpFromUws } from '../auth/ip.js';
 import { checkRateLimit, getRateLimitBurst } from '../auth/rate-limiter.js';
 import { registerAgent } from '../auth/registration.js';
+import { battleActionSchema } from '../game/types.js';
 import { createLogger } from '../logger.js';
 import { createRedisClient, createRedisSubscriber } from '../redis/client.js';
 import { RegisterRequestSchema, VoteRequestSchema } from '../types/api.js';
@@ -220,6 +221,14 @@ export class RelayServer {
 				tickId: msg.tickId,
 				gameId: msg.gameId,
 				state: msg.state,
+			});
+			// Auto-flush buffered votes to home client after state push
+			// The home client just finished a tick, so send it any votes for the next tick
+			this.flushVoteBuffer(msg.tickId, msg.gameId).catch((err: unknown) => {
+				this.logger.error(
+					{ err, tickId: msg.tickId, gameId: msg.gameId },
+					'Failed to auto-flush votes after state push',
+				);
 			});
 			return;
 		}
@@ -445,6 +454,41 @@ export class RelayServer {
 
 type RelayRequestContext = { rawKey: string; ip: string; userAgent: string };
 
+type VoteParseResult = { ok: true; action: string } | { ok: false; statusCode: number; body: Record<string, unknown> };
+
+function parseVoteBody(bodyStr: string): VoteParseResult {
+	let body: unknown;
+	try {
+		body = JSON.parse(bodyStr);
+	} catch {
+		return { ok: false, statusCode: 400, body: { error: 'Invalid JSON', code: 'PARSE_ERROR' } };
+	}
+
+	const parsed = VoteRequestSchema.safeParse(body);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			statusCode: 400,
+			body: { error: 'Invalid request body', code: 'VALIDATION_ERROR', details: parsed.error.flatten() },
+		};
+	}
+
+	const { action } = parsed.data;
+	const actionResult = battleActionSchema.safeParse(action);
+	if (!actionResult.success) {
+		return {
+			ok: false,
+			statusCode: 400,
+			body: {
+				error: `Invalid action "${action}". Valid actions: move:0, move:1, move:2, move:3, switch:0-5, run`,
+				code: 'INVALID_ACTION',
+			},
+		};
+	}
+
+	return { ok: true, action };
+}
+
 async function relayAuthAndRateLimit(
 	res: HttpResponse,
 	ctx: RelayRequestContext,
@@ -573,39 +617,28 @@ export async function startRelayServer(): Promise<RelayServer> {
 				const auth = await relayAuthAndRateLimit(res, ctx, redis, logger);
 				if (!auth || aborted) return;
 
-				let body: unknown;
-				try {
-					body = JSON.parse(bodyStr);
-				} catch {
-					sendJson(res, 400, { error: 'Invalid JSON', code: 'PARSE_ERROR' });
+				const voteResult = parseVoteBody(bodyStr);
+				if (!voteResult.ok) {
+					sendJson(res, voteResult.statusCode, voteResult.body);
 					return;
 				}
-
-				const parsed = VoteRequestSchema.safeParse(body);
-				if (!parsed.success) {
-					sendJson(res, 400, {
-						error: 'Invalid request body',
-						code: 'VALIDATION_ERROR',
-						details: parsed.error.flatten(),
-					});
-					return;
-				}
-
-				const { action } = parsed.data;
 
 				await server.bufferVote(auth.agent.agentId, {
 					agentId: auth.agent.agentId,
-					action,
+					action: voteResult.action,
 					timestamp: Date.now(),
 				});
 
 				const cached = server.getCachedState();
 				const currentTick = cached?.turn ?? 0;
 
-				logger.debug({ agentId: auth.agent.agentId, action, tick: currentTick }, 'Vote buffered on relay');
+				logger.debug(
+					{ agentId: auth.agent.agentId, action: voteResult.action, tick: currentTick },
+					'Vote buffered on relay',
+				);
 
 				if (!aborted) {
-					sendJson(res, 202, { accepted: true, tick: currentTick, action });
+					sendJson(res, 202, { accepted: true, tick: currentTick, action: voteResult.action });
 				}
 			})
 			.catch((err: unknown) => {
