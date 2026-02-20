@@ -4,6 +4,7 @@ import {
 	BattlePhase,
 	DEFAULT_FALLBACK_ACTION,
 	DEFAULT_TICK_INTERVAL_MS,
+	GamePhase,
 	PokemonType,
 	SNAPSHOT_INTERVAL,
 	StatusCondition,
@@ -13,7 +14,17 @@ import {
 	battleActionSchema,
 	battlePhaseSchema,
 	battleStateSchema,
+	directionSchema,
+	gamePhaseSchema,
+	gameStateSchema,
+	inventoryItemSchema,
+	itemInfoSchema,
+	mapLocationSchema,
 	moveDataSchema,
+	npcInfoSchema,
+	overworldActionSchema,
+	overworldStateSchema,
+	playerInfoSchema,
 	pokemonStateSchema,
 	pokemonTypeSchema,
 	statusConditionSchema,
@@ -287,5 +298,314 @@ describe('battleStateSchema', () => {
 
 	it('rejects negative turn', () => {
 		expect(battleStateSchema.safeParse({ ...validState, turn: -1 }).success).toBe(false);
+	});
+});
+
+describe('GamePhase enum', () => {
+	it('has 5 game phases', () => {
+		expect(Object.values(GamePhase)).toHaveLength(5);
+	});
+
+	it('has expected values', () => {
+		expect(GamePhase.Overworld).toBe('overworld');
+		expect(GamePhase.Battle).toBe('battle');
+		expect(GamePhase.Menu).toBe('menu');
+		expect(GamePhase.Dialogue).toBe('dialogue');
+		expect(GamePhase.Cutscene).toBe('cutscene');
+	});
+});
+
+describe('gamePhaseSchema', () => {
+	it('accepts all phases', () => {
+		for (const val of Object.values(GamePhase)) {
+			expect(gamePhaseSchema.safeParse(val).success).toBe(true);
+		}
+	});
+
+	it('rejects invalid phase', () => {
+		expect(gamePhaseSchema.safeParse('loading').success).toBe(false);
+	});
+});
+
+describe('overworldActionSchema', () => {
+	it('accepts all directional actions', () => {
+		for (const action of ['up', 'down', 'left', 'right']) {
+			expect(overworldActionSchema.safeParse(action).success).toBe(true);
+		}
+	});
+
+	it('accepts button actions', () => {
+		for (const action of ['a_button', 'b_button', 'start', 'select']) {
+			expect(overworldActionSchema.safeParse(action).success).toBe(true);
+		}
+	});
+
+	it('rejects invalid action', () => {
+		expect(overworldActionSchema.safeParse('jump').success).toBe(false);
+		expect(overworldActionSchema.safeParse('').success).toBe(false);
+	});
+});
+
+describe('directionSchema', () => {
+	it('accepts all directions', () => {
+		for (const dir of ['up', 'down', 'left', 'right']) {
+			expect(directionSchema.safeParse(dir).success).toBe(true);
+		}
+	});
+
+	it('rejects invalid direction', () => {
+		expect(directionSchema.safeParse('northeast').success).toBe(false);
+	});
+});
+
+describe('mapLocationSchema', () => {
+	const valid = { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10 };
+
+	it('accepts valid location', () => {
+		expect(mapLocationSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it('rejects negative coordinates', () => {
+		expect(mapLocationSchema.safeParse({ ...valid, x: -1 }).success).toBe(false);
+		expect(mapLocationSchema.safeParse({ ...valid, y: -1 }).success).toBe(false);
+	});
+
+	it('rejects negative mapId', () => {
+		expect(mapLocationSchema.safeParse({ ...valid, mapId: -1 }).success).toBe(false);
+	});
+});
+
+describe('npcInfoSchema', () => {
+	const valid = { id: 1, name: 'Old Man', x: 3, y: 7, canTalk: true };
+
+	it('accepts valid NPC', () => {
+		expect(npcInfoSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it('accepts non-talking NPC', () => {
+		expect(npcInfoSchema.safeParse({ ...valid, canTalk: false }).success).toBe(true);
+	});
+
+	it('rejects negative position', () => {
+		expect(npcInfoSchema.safeParse({ ...valid, x: -1 }).success).toBe(false);
+	});
+});
+
+describe('itemInfoSchema', () => {
+	const valid = { id: 4, name: 'Potion', x: 2, y: 8 };
+
+	it('accepts valid item', () => {
+		expect(itemInfoSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it('rejects negative position', () => {
+		expect(itemInfoSchema.safeParse({ ...valid, y: -3 }).success).toBe(false);
+	});
+});
+
+describe('inventoryItemSchema', () => {
+	const valid = { itemId: 4, name: 'Potion', quantity: 5 };
+
+	it('accepts valid inventory item', () => {
+		expect(inventoryItemSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it('accepts zero quantity', () => {
+		expect(inventoryItemSchema.safeParse({ ...valid, quantity: 0 }).success).toBe(true);
+	});
+
+	it('rejects negative quantity', () => {
+		expect(inventoryItemSchema.safeParse({ ...valid, quantity: -1 }).success).toBe(false);
+	});
+});
+
+describe('playerInfoSchema', () => {
+	const validPokemon = {
+		species: 'Pikachu',
+		level: 25,
+		hp: 50,
+		maxHp: 50,
+		attack: 55,
+		defense: 40,
+		specialAttack: 50,
+		specialDefense: 50,
+		speed: 90,
+		status: 'none',
+		types: ['electric'],
+		moves: [],
+	};
+
+	const valid = {
+		name: 'Red',
+		money: 3000,
+		badges: 2,
+		inventory: [{ itemId: 4, name: 'Potion', quantity: 3 }],
+		party: [validPokemon],
+	};
+
+	it('accepts valid player info', () => {
+		expect(playerInfoSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it('accepts empty inventory and party', () => {
+		expect(playerInfoSchema.safeParse({ ...valid, inventory: [], party: [] }).success).toBe(true);
+	});
+
+	it('rejects negative money', () => {
+		expect(playerInfoSchema.safeParse({ ...valid, money: -1 }).success).toBe(false);
+	});
+
+	it('rejects badges over 8', () => {
+		expect(playerInfoSchema.safeParse({ ...valid, badges: 9 }).success).toBe(false);
+	});
+
+	it('rejects party with more than 6 members', () => {
+		const bigParty = Array(7).fill(validPokemon);
+		expect(playerInfoSchema.safeParse({ ...valid, party: bigParty }).success).toBe(false);
+	});
+});
+
+describe('overworldStateSchema', () => {
+	const validPokemon = {
+		species: 'Pikachu',
+		level: 25,
+		hp: 50,
+		maxHp: 50,
+		attack: 55,
+		defense: 40,
+		specialAttack: 50,
+		specialDefense: 50,
+		speed: 90,
+		status: 'none',
+		types: ['electric'],
+		moves: [],
+	};
+
+	const valid = {
+		gamePhase: 'overworld',
+		location: { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10 },
+		playerDirection: 'down',
+		inBuilding: false,
+		canMove: true,
+		nearbyNpcs: [],
+		nearbyItems: [],
+		player: {
+			name: 'Red',
+			money: 3000,
+			badges: 0,
+			inventory: [],
+			party: [validPokemon],
+		},
+		menuOpen: null,
+		dialogueText: null,
+		secondsRemaining: 15,
+	};
+
+	it('accepts valid overworld state', () => {
+		expect(overworldStateSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it('accepts null menuOpen and dialogueText', () => {
+		expect(overworldStateSchema.safeParse({ ...valid, menuOpen: null, dialogueText: null }).success).toBe(true);
+	});
+
+	it('accepts string menuOpen', () => {
+		expect(overworldStateSchema.safeParse({ ...valid, menuOpen: 'bag' }).success).toBe(true);
+	});
+
+	it('accepts string dialogueText', () => {
+		expect(overworldStateSchema.safeParse({ ...valid, dialogueText: 'Hello there!' }).success).toBe(true);
+	});
+
+	it('rejects negative secondsRemaining', () => {
+		expect(overworldStateSchema.safeParse({ ...valid, secondsRemaining: -1 }).success).toBe(false);
+	});
+
+	it('rejects invalid gamePhase', () => {
+		expect(overworldStateSchema.safeParse({ ...valid, gamePhase: 'flying' }).success).toBe(false);
+	});
+
+	it('rejects invalid playerDirection', () => {
+		expect(overworldStateSchema.safeParse({ ...valid, playerDirection: 'diagonal' }).success).toBe(false);
+	});
+});
+
+describe('gameStateSchema', () => {
+	const validPokemon = {
+		species: 'Pikachu',
+		level: 25,
+		hp: 50,
+		maxHp: 50,
+		attack: 55,
+		defense: 40,
+		specialAttack: 50,
+		specialDefense: 50,
+		speed: 90,
+		status: 'none',
+		types: ['electric'],
+		moves: [],
+	};
+
+	const validBattle = {
+		gameId: 'game-1',
+		turn: 0,
+		phase: 'choose_action',
+		playerActive: validPokemon,
+		playerParty: [validPokemon],
+		opponent: {
+			species: 'Rattata',
+			hpPercent: 100,
+			status: 'none',
+			types: ['normal'],
+			level: 10,
+		},
+		availableActions: ['move:0'],
+		weather: 'clear',
+		turnHistory: [],
+		lastAction: null,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	};
+
+	const validOverworld = {
+		gamePhase: 'overworld',
+		location: { mapId: 1, mapName: 'Pallet Town', x: 5, y: 10 },
+		playerDirection: 'down',
+		inBuilding: false,
+		canMove: true,
+		nearbyNpcs: [],
+		nearbyItems: [],
+		player: {
+			name: 'Red',
+			money: 3000,
+			badges: 0,
+			inventory: [],
+			party: [validPokemon],
+		},
+		menuOpen: null,
+		dialogueText: null,
+		secondsRemaining: 15,
+	};
+
+	it('accepts battle mode state', () => {
+		const state = { mode: 'battle', battle: validBattle };
+		expect(gameStateSchema.safeParse(state).success).toBe(true);
+	});
+
+	it('accepts overworld mode state', () => {
+		const state = { mode: 'overworld', overworld: validOverworld };
+		expect(gameStateSchema.safeParse(state).success).toBe(true);
+	});
+
+	it('rejects unknown mode', () => {
+		expect(gameStateSchema.safeParse({ mode: 'loading' }).success).toBe(false);
+	});
+
+	it('rejects battle mode without battle data', () => {
+		expect(gameStateSchema.safeParse({ mode: 'battle' }).success).toBe(false);
+	});
+
+	it('rejects overworld mode without overworld data', () => {
+		expect(gameStateSchema.safeParse({ mode: 'overworld' }).success).toBe(false);
 	});
 });
