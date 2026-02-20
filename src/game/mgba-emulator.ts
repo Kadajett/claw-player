@@ -169,7 +169,40 @@ export class MgbaEmulator implements GameBoyEmulator {
 			0xd349, // money (BCD)
 			0xd356, // badges
 			0xd31d, // num bag items
+			// Party data
+			0xd163, // wPartyCount
 		];
+
+		// wPartySpecies: 7 bytes at 0xD164 (6 species + FF terminator)
+		for (let i = 0; i < 7; i++) {
+			addresses.push(0xd164 + i);
+		}
+
+		// Party Pokemon structs: up to 6 Pokemon, 44 bytes each at 0xD16B
+		// Key offsets per mon: +0=species, +1/+2=HP, +4=status, +5=type1, +6=type2,
+		// +8..+B=moves, +0x1D..+0x20=PP, +0x21=level, +0x22/+0x23=maxHP
+		for (let mon = 0; mon < 6; mon++) {
+			const base = 0xd16b + mon * 0x2c;
+			addresses.push(
+				base, // species
+				base + 0x01,
+				base + 0x02, // HP high/low
+				base + 0x04, // status
+				base + 0x05,
+				base + 0x06, // type1, type2
+				base + 0x08,
+				base + 0x09,
+				base + 0x0a,
+				base + 0x0b, // 4 moves
+				base + 0x1d,
+				base + 0x1e,
+				base + 0x1f,
+				base + 0x20, // 4 PP
+				base + 0x21, // level
+				base + 0x22,
+				base + 0x23, // max HP high/low
+			);
+		}
 
 		// Screen tilemap (wTileMap): 20x18 grid at 0xC3A0 (360 bytes)
 		// Full screen read for dialogue text + menu detection

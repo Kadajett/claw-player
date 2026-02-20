@@ -108,30 +108,12 @@ For directional buttons in overworld, the response includes whether movement suc
 				const facingWalkable = isTileWalkable(tilesetId, facingTileId);
 				const facingTileDesc = describeTile(tilesetId, facingTileId);
 
-				const result: Record<string, unknown> = {
-					button,
-					gamePhase: state.gamePhase,
-					position: { x: state.location.x, y: state.location.y, map: state.location.mapName },
-					playerDirection: state.playerDirection,
-					canMove: state.canMove,
-					facingTile: { walkable: facingWalkable, type: facingTileDesc },
-				};
-
-				// Include menu state if a menu is open
-				if (state.menuOpen) {
-					result.menuOpen = state.menuOpen;
-				}
-
-				// Include dialogue text if present
-				if (state.dialogueText) {
-					result.dialogueText = state.dialogueText;
-				}
-
-				// Include battle info when in battle
+				// Build battle info if applicable
+				let battle: unknown = undefined;
 				if (state.gamePhase === 'battle' && isInBattle(ram)) {
 					const player = extractPlayerPokemon(ram);
 					const opponent = extractOpponentPokemon(ram);
-					result.battle = {
+					battle = {
 						yourPokemon: `${player.species} Lv${player.level} HP:${player.hp}/${player.maxHp}`,
 						yourMoves: player.moves.map((m) => `${m.name} (PP:${m.pp})`),
 						opponent: `${opponent.species} Lv${opponent.level} HP:${Math.round(opponent.hpPercent)}%`,
@@ -139,17 +121,37 @@ For directional buttons in overworld, the response includes whether movement suc
 					};
 				}
 
-				// Movement-specific feedback for directional buttons
+				// Build movement feedback if applicable
+				let moved: boolean | undefined;
+				let blocked: boolean | undefined;
+				let mapChanged: boolean | undefined;
+				let message: string | undefined;
 				if (movementResult) {
-					result.moved = movementResult.moved;
+					moved = movementResult.moved;
 					if (!movementResult.moved) {
-						result.blocked = true;
-						result.message = `Movement BLOCKED by ${facingTileDesc}`;
+						blocked = true;
+						message = `Movement BLOCKED by ${facingTileDesc}`;
 					} else if (movementResult.from.mapId !== movementResult.to.mapId) {
-						result.mapChanged = true;
-						result.message = 'Entered a new map!';
+						mapChanged = true;
+						message = 'Entered a new map!';
 					}
 				}
+
+				const result = {
+					button,
+					gamePhase: state.gamePhase,
+					position: { x: state.location.x, y: state.location.y, map: state.location.mapName },
+					playerDirection: state.playerDirection,
+					canMove: state.canMove,
+					facingTile: { walkable: facingWalkable, type: facingTileDesc },
+					...(state.menuOpen ? { menuOpen: state.menuOpen } : {}),
+					...(state.dialogueText ? { dialogueText: state.dialogueText } : {}),
+					...(battle ? { battle } : {}),
+					...(moved !== undefined ? { moved } : {}),
+					...(blocked ? { blocked } : {}),
+					...(mapChanged ? { mapChanged } : {}),
+					...(message ? { message } : {}),
+				};
 
 				return {
 					content: [{ type: 'text' as const, text: JSON.stringify(result) }],

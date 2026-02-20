@@ -47,6 +47,11 @@ export const ADDR_ENEMY_TYPE1 = 0xd0ac; // enemy type 1
 export const ADDR_ENEMY_TYPE2 = 0xd0ad; // enemy type 2
 export const ADDR_ENEMY_LEVEL = 0xcfeb; // enemy level
 
+// Party data addresses
+const ADDR_PARTY_COUNT = 0xd163; // number of Pokemon in party (0-6)
+const ADDR_PARTY_MONS = 0xd16b; // start of party Pokemon structs (44 bytes each)
+const PARTY_MON_SIZE = 0x2c; // 44 bytes per party member
+
 // Status bitmasks (Gen 1)
 const STATUS_SLEEP_MASK = 0x07; // lower 3 bits = sleep turns remaining
 const STATUS_FROZEN_BIT = 0x08;
@@ -255,6 +260,40 @@ export function extractPlayerPokemon(ram: ReadonlyArray<number>): PokemonState {
 		types: decodeTypes(ram[ADDR_PLAYER_TYPE1] ?? 0, ram[ADDR_PLAYER_TYPE2] ?? 0),
 		moves: decodeMoves(ram, ADDR_PLAYER_MOVES, ADDR_PLAYER_PP),
 	};
+}
+
+export function readParty(ram: ReadonlyArray<number>): Array<PokemonState> {
+	const count = Math.min(ram[ADDR_PARTY_COUNT] ?? 0, 6);
+	if (count === 0) return [];
+
+	const party: Array<PokemonState> = [];
+	for (let i = 0; i < count; i++) {
+		const base = ADDR_PARTY_MONS + i * PARTY_MON_SIZE;
+		const speciesCode = ram[base] ?? 0;
+		if (speciesCode === 0 || speciesCode === 0xff) continue;
+
+		const hp = readWord(ram, base + 0x01);
+		const maxHp = readWord(ram, base + 0x22);
+		const level = ram[base + 0x21] ?? 1;
+		const { condition } = decodeStatus(ram[base + 0x04] ?? 0);
+		const estimatedStat = Math.max(1, Math.floor(level * 1.5 + 20));
+
+		party.push({
+			species: decodeSpecies(speciesCode),
+			level,
+			hp,
+			maxHp: maxHp > 0 ? maxHp : 1,
+			attack: estimatedStat,
+			defense: estimatedStat,
+			specialAttack: estimatedStat,
+			specialDefense: estimatedStat,
+			speed: estimatedStat,
+			status: condition,
+			types: decodeTypes(ram[base + 0x05] ?? 0, ram[base + 0x06] ?? 0),
+			moves: decodeMoves(ram, base + 0x08, base + 0x1d),
+		});
+	}
+	return party;
 }
 
 export function extractOpponentPokemon(ram: ReadonlyArray<number>): OpponentState {
@@ -868,7 +907,7 @@ export function extractOverworldState(ram: ReadonlyArray<number>): OverworldStat
 			money: readMoney(ram),
 			badges: readBadges(ram),
 			inventory: readInventory(ram),
-			party: [], // full party extraction requires party RAM addresses
+			party: readParty(ram),
 		},
 		menuOpen: readMenuState(ram),
 		dialogueText: readScreenText(ram),
