@@ -1,12 +1,11 @@
 import type { Logger } from 'pino';
 
 import { applyAction } from './battle-engine.js';
-import { getButtonSequence } from './button-sequences.js';
 import type { GameBoyEmulator } from './emulator-interface.js';
 import { extractBattleState } from './memory-map.js';
-import type { StateManager } from './state.js';
 import { StatePoller } from './state-poller.js';
-import type { BattleState, TickResult } from './types.js';
+import type { StateManager } from './state.js';
+import { type BattleState, type GameAction, type TickResult, gameActionToGbButton } from './types.js';
 import type { VoteAggregator } from './vote-aggregator.js';
 
 export type TickCallback = (state: BattleState) => Promise<void> | void;
@@ -187,7 +186,7 @@ export class TickProcessor {
 
 	private async executeOnRealEmulator(
 		gameId: string,
-		actionToApply: string,
+		actionToApply: GameAction,
 		tickId: number,
 		totalVotes: number,
 	): Promise<{ newState: BattleState; description: string }> {
@@ -196,16 +195,11 @@ export class TickProcessor {
 			throw new Error('Real emulator not available');
 		}
 
-		// Get button sequence for this action
-		const steps = getButtonSequence(actionToApply as import('./types.js').BattleAction);
+		// Single button press per tick
+		const button = gameActionToGbButton(actionToApply);
+		await emulator.pressButton(button);
 
-		this.logger.info({ action: actionToApply, steps: steps.length }, 'Executing button sequence on real emulator');
-
-		// Execute each button press with timing
-		for (const step of steps) {
-			await emulator.pressButton(step.button);
-			await emulator.waitMs(step.delayMs);
-		}
+		this.logger.info({ action: actionToApply, button }, 'Pressed button on real emulator');
 
 		// Poll for the battle menu to be ready again
 		if (this.statePoller) {

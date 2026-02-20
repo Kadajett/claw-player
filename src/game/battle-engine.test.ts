@@ -6,7 +6,6 @@ import {
 	buildInitialActions,
 	calculateDamage,
 	computeAvailableActions,
-	parseAction,
 	rollCritical,
 } from './battle-engine.js';
 import { BattlePhase, type BattleState, type PokemonState, PokemonType, StatusCondition } from './types.js';
@@ -179,28 +178,6 @@ describe('rollCritical', () => {
 		// Should be within 2 standard deviations of 6.25%
 		expect(hits / trials).toBeGreaterThan(0.03);
 		expect(hits / trials).toBeLessThan(0.1);
-	});
-});
-
-describe('parseAction', () => {
-	it('parses run', () => {
-		expect(parseAction('run')).toEqual({ type: 'run' });
-	});
-
-	it('parses move actions', () => {
-		expect(parseAction('move:0')).toEqual({ type: 'move', index: 0 });
-		expect(parseAction('move:3')).toEqual({ type: 'move', index: 3 });
-	});
-
-	it('parses switch actions', () => {
-		expect(parseAction('switch:0')).toEqual({ type: 'switch', index: 0 });
-		expect(parseAction('switch:5')).toEqual({ type: 'switch', index: 5 });
-	});
-
-	it('returns null for invalid action', () => {
-		expect(parseAction('fly')).toBeNull();
-		expect(parseAction('move:4')).toBeNull();
-		expect(parseAction('')).toBeNull();
 	});
 });
 

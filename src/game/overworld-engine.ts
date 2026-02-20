@@ -1,10 +1,10 @@
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
-import { z } from 'zod';
 
-import type { GameBoyEmulator, GbButton } from './emulator-interface.js';
+import type { GameBoyEmulator } from './emulator-interface.js';
 import { extractBattleState, isInBattle } from './memory-map.js';
 import type { TickProcessor } from './tick-processor.js';
+import { ALL_GAME_ACTIONS, type GameAction, gameActionSchema, gameActionToGbButton } from './types.js';
 
 // ─── Game Phase ──────────────────────────────────────────────────────────────
 
@@ -17,17 +17,16 @@ export enum GamePhase {
 
 // ─── Overworld Action ────────────────────────────────────────────────────────
 
-const OVERWORLD_ACTIONS = ['up', 'down', 'left', 'right', 'a_button', 'b_button', 'start', 'select'] as const;
+/** @deprecated Use GameAction from './types.js' instead. */
+export type OverworldAction = GameAction;
 
-export type OverworldAction = (typeof OVERWORLD_ACTIONS)[number];
-
-export const overworldActionSchema = z.enum(OVERWORLD_ACTIONS);
+export { gameActionSchema as overworldActionSchema };
 
 // ─── Overworld Turn History Entry ────────────────────────────────────────────
 
 export type OverworldTurnHistoryEntry = {
 	turn: number;
-	action: OverworldAction;
+	action: GameAction;
 	description: string;
 	totalVotes: number;
 };
@@ -41,8 +40,8 @@ export type OverworldState = {
 	playerX: number;
 	playerY: number;
 	mapId: number;
-	availableActions: Array<OverworldAction>;
-	lastAction: OverworldAction | null;
+	availableActions: Array<GameAction>;
+	lastAction: GameAction | null;
 	turnHistory: Array<OverworldTurnHistoryEntry>;
 	createdAt: number;
 	updatedAt: number;
@@ -53,7 +52,7 @@ export type OverworldState = {
 export type OverworldVoteResult = {
 	tickId: number;
 	gameId: string;
-	winningAction: OverworldAction;
+	winningAction: GameAction;
 	voteCounts: Record<string, number>;
 	totalVotes: number;
 };
@@ -89,7 +88,7 @@ export const DEFAULT_FRAME_COUNTS: FrameCounts = {
 	select: 0,
 };
 
-export const DEFAULT_OVERWORLD_FALLBACK_ACTION: OverworldAction = 'a_button';
+export const DEFAULT_OVERWORLD_FALLBACK_ACTION: GameAction = 'a';
 
 const OVERWORLD_VOTE_KEY_EXPIRY_SECONDS = 3600;
 
@@ -103,37 +102,21 @@ const ADDR_MENU_ITEM_ID = 0xcc2d;
 
 // ─── Action to Button Mapping ────────────────────────────────────────────────
 
-const ACTION_BUTTON_MAP: ReadonlyMap<OverworldAction, GbButton> = new Map([
-	['up', 'UP'],
-	['down', 'DOWN'],
-	['left', 'LEFT'],
-	['right', 'RIGHT'],
-	['a_button', 'A'],
-	['b_button', 'B'],
-	['start', 'START'],
-	['select', 'SELECT'],
-]);
-
-export function mapActionToButton(action: OverworldAction): GbButton {
-	const button = ACTION_BUTTON_MAP.get(action);
-	if (!button) {
-		throw new Error(`Unknown overworld action: ${action}`);
-	}
-	return button;
-}
+/** @deprecated Use gameActionToGbButton from './types.js' instead. */
+export const mapActionToButton = gameActionToGbButton;
 
 // ─── Frame Timing ────────────────────────────────────────────────────────────
 
-export function getFrameCount(action: OverworldAction): number {
+export function getFrameCount(action: GameAction): number {
 	switch (action) {
 		case 'up':
 		case 'down':
 		case 'left':
 		case 'right':
 			return DEFAULT_FRAME_COUNTS.movement;
-		case 'a_button':
+		case 'a':
 			return DEFAULT_FRAME_COUNTS.aButton;
-		case 'b_button':
+		case 'b':
 			return DEFAULT_FRAME_COUNTS.bButton;
 		case 'start':
 			return DEFAULT_FRAME_COUNTS.start;
@@ -144,54 +127,45 @@ export function getFrameCount(action: OverworldAction): number {
 
 // ─── Action Parsing ──────────────────────────────────────────────────────────
 
-export function parseOverworldAction(action: string): OverworldAction | null {
-	const parsed = overworldActionSchema.safeParse(action);
+export function parseOverworldAction(action: string): GameAction | null {
+	const parsed = gameActionSchema.safeParse(action);
 	return parsed.success ? parsed.data : null;
 }
 
 // ─── Available Actions ───────────────────────────────────────────────────────
 
-export function getAvailableActions(phase: GamePhase): Array<OverworldAction> {
-	switch (phase) {
-		case GamePhase.Overworld:
-			return ['up', 'down', 'left', 'right', 'a_button', 'b_button', 'start', 'select'];
-		case GamePhase.Menu:
-			return ['up', 'down', 'left', 'right', 'a_button', 'b_button'];
-		case GamePhase.Dialogue:
-			return ['a_button', 'b_button'];
-		case GamePhase.Battle:
-			return [];
-	}
+export function getAvailableActions(_phase: GamePhase): Array<GameAction> {
+	return [...ALL_GAME_ACTIONS];
 }
 
 // ─── Action Description ──────────────────────────────────────────────────────
 
-const DIALOGUE_DESCRIPTIONS = new Map<OverworldAction, string>([
-	['a_button', 'Advanced dialogue'],
-	['b_button', 'Tried to skip dialogue'],
+const DIALOGUE_DESCRIPTIONS = new Map<GameAction, string>([
+	['a', 'Advanced dialogue'],
+	['b', 'Tried to skip dialogue'],
 ]);
 
-const MENU_DESCRIPTIONS = new Map<OverworldAction, string>([
-	['a_button', 'Confirmed menu selection'],
-	['b_button', 'Cancelled/closed menu'],
+const MENU_DESCRIPTIONS = new Map<GameAction, string>([
+	['a', 'Confirmed menu selection'],
+	['b', 'Cancelled/closed menu'],
 	['up', 'Navigated menu up'],
 	['down', 'Navigated menu down'],
 	['left', 'Navigated menu left'],
 	['right', 'Navigated menu right'],
 ]);
 
-const DEFAULT_DESCRIPTIONS = new Map<OverworldAction, string>([
+const DEFAULT_DESCRIPTIONS = new Map<GameAction, string>([
 	['up', 'Moved up'],
 	['down', 'Moved down'],
 	['left', 'Moved left'],
 	['right', 'Moved right'],
-	['a_button', 'Pressed A (interact)'],
-	['b_button', 'Pressed B (cancel)'],
+	['a', 'Pressed A (interact)'],
+	['b', 'Pressed B (cancel)'],
 	['start', 'Opened start menu'],
 	['select', 'Pressed Select'],
 ]);
 
-export function describeAction(action: OverworldAction, phase: GamePhase): string {
+export function describeAction(action: GameAction, phase: GamePhase): string {
 	const fallback = DEFAULT_DESCRIPTIONS.get(action) ?? 'Unknown action';
 	if (phase === GamePhase.Dialogue) {
 		return DIALOGUE_DESCRIPTIONS.get(action) ?? fallback;
@@ -273,7 +247,7 @@ export class OverworldVoteAggregator implements OverworldVoteTallier {
 		return `${OVERWORLD_VOTES_KEY_PREFIX}${gameId}:${tickId}`;
 	}
 
-	async recordVote(gameId: string, tickId: number, action: OverworldAction): Promise<void> {
+	async recordVote(gameId: string, tickId: number, action: GameAction): Promise<void> {
 		const key = this.voteKey(gameId, tickId);
 		const pipeline = this.redis.pipeline();
 		pipeline.zadd(key, 'INCR', 1, action);
@@ -288,7 +262,7 @@ export class OverworldVoteAggregator implements OverworldVoteTallier {
 
 		const voteCounts: Record<string, number> = {};
 		let totalVotes = 0;
-		let winningAction: OverworldAction = DEFAULT_OVERWORLD_FALLBACK_ACTION;
+		let winningAction: GameAction = DEFAULT_OVERWORLD_FALLBACK_ACTION;
 		let highestCount = 0;
 
 		for (let i = 0; i < raw.length - 1; i += 2) {
@@ -299,7 +273,7 @@ export class OverworldVoteAggregator implements OverworldVoteTallier {
 			const count = Number.parseInt(scoreStr, 10);
 			if (Number.isNaN(count)) continue;
 
-			const parsed = overworldActionSchema.safeParse(member);
+			const parsed = gameActionSchema.safeParse(member);
 			if (!parsed.success) continue;
 
 			const action = parsed.data;
@@ -426,16 +400,16 @@ export class OverworldTickProcessor {
 		this.logger.info({ gameId, tickIntervalMs: this.tickIntervalMs }, 'Overworld tick processor started');
 	}
 
-	private getConfiguredFrameCount(action: OverworldAction): number {
+	private getConfiguredFrameCount(action: GameAction): number {
 		switch (action) {
 			case 'up':
 			case 'down':
 			case 'left':
 			case 'right':
 				return this.frameCounts.movement;
-			case 'a_button':
+			case 'a':
 				return this.frameCounts.aButton;
-			case 'b_button':
+			case 'b':
 				return this.frameCounts.bButton;
 			case 'start':
 				return this.frameCounts.start;
@@ -460,7 +434,7 @@ export class OverworldTickProcessor {
 			: DEFAULT_OVERWORLD_FALLBACK_ACTION;
 
 		// Map action to button and press on emulator
-		const button = mapActionToButton(actionToApply);
+		const button = gameActionToGbButton(actionToApply);
 		await this.emulator.pressButton(button);
 
 		// Advance additional frames for animation completion

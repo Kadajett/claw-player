@@ -3,11 +3,11 @@ import {
 	type BattleAction,
 	BattlePhase,
 	type BattleState,
-	battleActionSchema,
 	type GameAction,
 	type PokemonState,
 	StatusCondition,
 	type TurnHistoryEntry,
+	battleActionSchema,
 } from './types.js';
 
 // Gen 1 damage formula constants
@@ -64,7 +64,8 @@ export function rollCritical(): boolean {
 	return Math.random() < BASE_CRIT_CHANCE;
 }
 
-export function parseAction(
+/** @deprecated Only used by deprecated applyAction simulation path. */
+function parseAction(
 	action: string,
 ): { type: 'move'; index: number } | { type: 'switch'; index: number } | { type: 'run' } | null {
 	const parsed = battleActionSchema.safeParse(action);
@@ -94,6 +95,7 @@ export function applyStatusDamage(pokemon: PokemonState): PokemonState {
 	return { ...pokemon, hp: newHp };
 }
 
+/** @deprecated Only used in simulation path. Real emulator path uses ALL_GAME_ACTIONS. */
 export function computeAvailableActions(state: BattleState): Array<GameAction> {
 	const actions: Array<BattleAction> = [];
 
@@ -206,6 +208,7 @@ function applyMoveAction(state: BattleState, action: BattleAction, index: number
 	return { newState: applyPostMovePhase(midState, opponentFainted), description };
 }
 
+/** @deprecated Only used in simulation path. Real emulator uses single button presses. */
 export function applyAction(state: BattleState, action: BattleAction, totalVotes: number): ActionResult {
 	const parsed = parseAction(action);
 	if (!parsed) {
@@ -241,6 +244,7 @@ export function applyAction(state: BattleState, action: BattleAction, totalVotes
 	};
 }
 
+/** @deprecated Only used in simulation path. Real emulator path uses ALL_GAME_ACTIONS. */
 export function buildInitialActions(state: BattleState): Array<GameAction> {
 	return computeAvailableActions(state);
 }
